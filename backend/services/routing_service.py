@@ -28,4 +28,26 @@ class RoutingService:
     @staticmethod
     def _to_leg(leg: dict) -> RouteLeg:
         mode = str(leg.get("mode", "")).lower()
-        return RouteLeg(mode="mrt" if mode == "rail" else mode, duration_min=round(float(leg["duration"]) / 60, 1), distance_m=float(leg.get("distance", 0)), from_location=leg.get("from", {}).get("name", "Origin"), to_location=leg.get("to", {}).get("name", "Destination"))
+        return RouteLeg(mode="mrt" if mode == "rail" else mode, duration_min=round(float(leg["duration"]) / 60, 1), distance_m=float(leg.get("distance", 0)), from_location=leg.get("from", {}).get("name", "Origin"), to_location=leg.get("to", {}).get("name", "Destination"), geometry=RoutingService._decode_polyline(leg.get("legGeometry", {}).get("points", "")), line_name=leg.get("route"))
+
+    @staticmethod
+    def _decode_polyline(encoded: str) -> list[Coordinates]:
+        """Decode OneMap's Google encoded polyline into map-ready WGS84 points."""
+        coordinates: list[Coordinates] = []
+        index = latitude = longitude = 0
+        while index < len(encoded):
+            values: list[int] = []
+            for _ in range(2):
+                shift = value = 0
+                while True:
+                    byte = ord(encoded[index]) - 63
+                    index += 1
+                    value |= (byte & 0x1F) << shift
+                    shift += 5
+                    if byte < 0x20:
+                        break
+                values.append(~(value >> 1) if value & 1 else value >> 1)
+            latitude += values[0]
+            longitude += values[1]
+            coordinates.append(Coordinates(lat=latitude / 100_000, lon=longitude / 100_000))
+        return coordinates
