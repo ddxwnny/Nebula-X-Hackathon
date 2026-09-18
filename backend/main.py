@@ -1,9 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from api.routes import router as routes_router
 
-
-app = FastAPI(title="Sum API")
+app = FastAPI(title="Door-to-Door Route Planner", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -12,22 +11,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-class SumRequest(BaseModel):
-    first_number: float
-    second_number: float
-
-
-class SumResponse(BaseModel):
-    sum: float
+app.include_router(routes_router, prefix="/api/v1")
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
+async def health_check() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.post("/api/sum", response_model=SumResponse)
-def calculate_sum(numbers: SumRequest) -> SumResponse:
-    return SumResponse(sum=numbers.first_number + numbers.second_number)

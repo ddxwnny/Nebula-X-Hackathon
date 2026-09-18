@@ -1,47 +1,57 @@
 import { FormEvent, useState } from "react";
 
-type SumResponse = { sum: number };
+type RouteResponse = {
+  recommended_route: { total_duration_min: number; legs: Array<{ mode: string; duration_min: number; from: string; to: string }> };
+};
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export default function App() {
-  const [firstNumber, setFirstNumber] = useState("");
-  const [secondNumber, setSecondNumber] = useState("");
-  const [sum, setSum] = useState<number | null>(null);
+  const [origin, setOrigin] = useState("");
+  const [destination, setDestination] = useState("");
+  const [route, setRoute] = useState<RouteResponse["recommended_route"] | null>(null);
+  const [error, setError] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError("");
+    setRoute(null);
 
-    const response = await fetch(`${API_URL}/api/sum`, {
+    const response = await fetch(`${API_URL}/api/v1/routes/plan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        first_number: Number(firstNumber),
-        second_number: Number(secondNumber),
+        origin: { address: origin },
+        destination: { address: destination },
       }),
     });
-    const result: SumResponse = await response.json();
-    setSum(result.sum);
+    const result = await response.json() as RouteResponse | { detail?: string };
+    if (!response.ok) {
+      setError("detail" in result && result.detail ? result.detail : "Unable to plan this route.");
+      return;
+    }
+    setRoute((result as RouteResponse).recommended_route);
   }
 
   return (
     <>
       <form onSubmit={handleSubmit}>
         <input
-          aria-label="First number"
-          type="number"
-          value={firstNumber}
-          onChange={(event) => setFirstNumber(event.target.value)}
+          aria-label="Origin"
+          placeholder="Origin"
+          value={origin}
+          onChange={(event) => setOrigin(event.target.value)}
         />
         <input
-          aria-label="Second number"
-          type="number"
-          value={secondNumber}
-          onChange={(event) => setSecondNumber(event.target.value)}
+          aria-label="Destination"
+          placeholder="Destination"
+          value={destination}
+          onChange={(event) => setDestination(event.target.value)}
         />
         <button type="submit">Enter</button>
       </form>
-      {sum !== null && <p>{sum}</p>}
+      {route && <div><p>{route.total_duration_min} min</p>{route.legs.map((leg, index) => <p key={index}>{leg.mode}: {leg.from} to {leg.to} ({leg.duration_min} min)</p>)}</div>}
+      {error && <p role="alert">{error}</p>}
     </>
   );
 }
