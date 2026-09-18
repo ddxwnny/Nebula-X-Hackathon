@@ -1,3 +1,5 @@
+from datetime import date, time
+
 from pydantic import BaseModel, model_validator
 from models.responses import Coordinates
 
@@ -28,3 +30,5 @@ class Location(BaseModel):
 class RouteRequest(BaseModel):
     origin: Location
     destination: Location
+    departure_date: date | None = None
+    departure_time: time | None = None

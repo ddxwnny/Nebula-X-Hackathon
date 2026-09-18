@@ -9,6 +9,8 @@ const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 export default function App() {
   const [origin, setOrigin] = useState("");
   const [destination, setDestination] = useState("");
+  const [departureDate, setDepartureDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [departureTime, setDepartureTime] = useState(() => new Date().toTimeString().slice(0, 5));
   const [route, setRoute] = useState<RouteResponse["recommended_route"] | null>(null);
   const [error, setError] = useState("");
 
@@ -23,6 +25,8 @@ export default function App() {
       body: JSON.stringify({
         origin: { address: origin },
         destination: { address: destination },
+        departure_date: departureDate,
+        departure_time: departureTime,
       }),
     });
     const result = await response.json() as RouteResponse | { detail?: string };
@@ -47,6 +51,18 @@ export default function App() {
           placeholder="Destination"
           value={destination}
           onChange={(event) => setDestination(event.target.value)}
+        />
+        <input
+          aria-label="Departure date"
+          type="date"
+          value={departureDate}
+          onChange={(event) => setDepartureDate(event.target.value)}
+        />
+        <input
+          aria-label="Departure time"
+          type="time"
+          value={departureTime}
+          onChange={(event) => setDepartureTime(event.target.value)}
         />
         <button type="submit">Enter</button>
       </form>

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime, time
 import httpx
 from fastapi import HTTPException, status
 from config import Settings
@@ -19,10 +19,12 @@ class OneMapClient:
         result = results[0]
         return Coordinates(lat=float(result["LATITUDE"]), lon=float(result["LONGITUDE"]), label=result.get("ADDRESS") or address)
 
-    async def transit_route(self, origin: Coordinates, destination: Coordinates) -> dict:
+    async def transit_route(self, origin: Coordinates, destination: Coordinates, departure_date: date | None = None, departure_time: time | None = None) -> dict:
         token = await self._token()
         now = datetime.now()
-        params = {"start": f"{origin.lat},{origin.lon}", "end": f"{destination.lat},{destination.lon}", "routeType": "pt", "date": now.strftime("%m-%d-%Y"), "time": now.strftime("%H:%M:%S"), "mode": "transit", "maxWalkDistance": 1000, "numItineraries": 3}
+        selected_date = departure_date or now.date()
+        selected_time = departure_time or now.time()
+        params = {"start": f"{origin.lat},{origin.lon}", "end": f"{destination.lat},{destination.lon}", "routeType": "pt", "date": selected_date.strftime("%m-%d-%Y"), "time": selected_time.strftime("%H:%M:%S"), "mode": "transit", "maxWalkDistance": 1000, "numItineraries": 3}
         async with httpx.AsyncClient(timeout=self.settings.http_timeout_seconds) as client:
             response = await client.get(f"{self.settings.onemap_base_url}/api/public/routingsvc/route", params=params, headers={"Authorization": token})
         self._check(response, "transit routing")

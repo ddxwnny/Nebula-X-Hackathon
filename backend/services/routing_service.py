@@ -1,3 +1,5 @@
+from datetime import date, time
+
 from fastapi import HTTPException
 from clients.onemap_client import OneMapClient
 from clients.routing_client import RoutingClient
@@ -8,8 +10,8 @@ from models.responses import Coordinates, Route, RouteLeg
 class RoutingService:
     def __init__(self, client: RoutingClient | None = None): self.client = client or RoutingClient(OneMapClient(get_settings()))
 
-    async def get_route(self, origin: Coordinates, destination: Coordinates) -> Route:
-        payload = await self.client.get_public_transit_route(origin, destination)
+    async def get_route(self, origin: Coordinates, destination: Coordinates, departure_date: date | None = None, departure_time: time | None = None) -> Route:
+        payload = await self.client.get_public_transit_route(origin, destination, departure_date, departure_time)
         try: itineraries = payload["plan"]["itineraries"]
         except (KeyError, IndexError, TypeError) as error: raise HTTPException(status_code=404, detail="No public-transit route found") from error
         # Prefer a multimodal journey, but preserve a genuine walking-only
