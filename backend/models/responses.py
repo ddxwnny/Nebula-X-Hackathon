@@ -7,6 +7,10 @@ class Coordinates(BaseModel):
     label: str | None = None
 
 
+class LocationSuggestion(Coordinates):
+    address: str
+
+
 class RouteLeg(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     mode: str

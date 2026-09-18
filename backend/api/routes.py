@@ -1,7 +1,7 @@
 from uuid import uuid4
 from fastapi import APIRouter, Depends
 from models.requests import RouteRequest
-from models.responses import RouteResponse
+from models.responses import LocationSuggestion, RouteResponse
 from services.geocoding_service import GeocodingService
 from services.routing_service import RoutingService
 
@@ -14,6 +14,11 @@ def get_geocoding_service() -> GeocodingService:
 
 def get_routing_service() -> RoutingService:
     return RoutingService()
+
+
+@router.get("/locations/search", response_model=list[LocationSuggestion])
+async def search_locations(query: str, geocoding_service: GeocodingService = Depends(get_geocoding_service)) -> list[LocationSuggestion]:
+    return await geocoding_service.search(query)
 
 
 @router.post("/routes/plan", response_model=RouteResponse)

@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 import httpx
 from fastapi import HTTPException, status
 from config import Settings
-from models.responses import Coordinates
+from models.responses import Coordinates, LocationSuggestion
 
 
 class OneMapClient:
@@ -10,14 +10,17 @@ class OneMapClient:
     def __init__(self, settings: Settings): self.settings = settings
 
     async def geocode(self, address: str) -> Coordinates:
+        suggestions = await self.search(address)
+        if not suggestions: raise HTTPException(status_code=404, detail=f"Address not found: {address}")
+        match = suggestions[0]
+        return Coordinates(lat=match.lat, lon=match.lon, label=match.address)
+
+    async def search(self, address: str) -> list[LocationSuggestion]:
         token = await self._token()
         async with httpx.AsyncClient(timeout=self.settings.http_timeout_seconds) as client:
             response = await client.get(f"{self.settings.onemap_base_url}/api/common/elastic/search", params={"searchVal": address, "returnGeom": "Y", "getAddrDetails": "Y", "pageNum": 1}, headers={"Authorization": token})
         self._check(response, "geocoding")
-        results = response.json().get("results", [])
-        if not results: raise HTTPException(status_code=404, detail=f"Address not found: {address}")
-        result = results[0]
-        return Coordinates(lat=float(result["LATITUDE"]), lon=float(result["LONGITUDE"]), label=result.get("ADDRESS") or address)
+        return [LocationSuggestion(lat=float(result["LATITUDE"]), lon=float(result["LONGITUDE"]), address=result.get("ADDRESS") or result.get("SEARCHVAL") or address, label=result.get("ADDRESS") or result.get("SEARCHVAL") or address) for result in response.json().get("results", [])]
 
     async def transit_route(self, origin: Coordinates, destination: Coordinates, departure_date: date | None = None, departure_time: time | None = None) -> dict:
         token = await self._token()

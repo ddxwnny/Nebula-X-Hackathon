@@ -7,8 +7,27 @@ type RouteResponse = {
   destination: { lat: number; lon: number; label?: string };
   recommended_route: { total_duration_min: number; legs: Array<{ mode: string; duration_min: number; from: string; to: string; geometry: Array<{ lat: number; lon: number }>; line_name?: string }> };
 };
+type LocationSuggestion = { address: string };
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+function useLocationSuggestions(query: string) {
+  const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
+  useEffect(() => {
+    if (query.trim().length < 2) { setSuggestions([]); return; }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/v1/locations/search?query=${encodeURIComponent(query)}`, { signal: controller.signal });
+        setSuggestions(response.ok ? await response.json() : []);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setSuggestions([]);
+      }
+    }, 250);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [query]);
+  return suggestions;
+}
 
 function FitRoute({ points }: { points: [number, number][] }) {
   const map = useMap();
@@ -32,6 +51,8 @@ export default function App() {
   const [departureTime, setDepartureTime] = useState(() => new Date().toTimeString().slice(0, 5));
   const [route, setRoute] = useState<RouteResponse | null>(null);
   const [error, setError] = useState("");
+  const originSuggestions = useLocationSuggestions(origin);
+  const destinationSuggestions = useLocationSuggestions(destination);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,8 +85,10 @@ export default function App() {
       <section className="panel">
         <h1>Route planner</h1>
         <form onSubmit={handleSubmit}>
-          <input aria-label="Origin" placeholder="Origin" value={origin} onChange={(event) => setOrigin(event.target.value)} required />
-          <input aria-label="Destination" placeholder="Destination" value={destination} onChange={(event) => setDestination(event.target.value)} required />
+          <input aria-label="Origin" placeholder="Origin" list="origin-suggestions" value={origin} onChange={(event) => setOrigin(event.target.value)} required />
+          <datalist id="origin-suggestions">{originSuggestions.map((location) => <option key={location.address} value={location.address} />)}</datalist>
+          <input aria-label="Destination" placeholder="Destination" list="destination-suggestions" value={destination} onChange={(event) => setDestination(event.target.value)} required />
+          <datalist id="destination-suggestions">{destinationSuggestions.map((location) => <option key={location.address} value={location.address} />)}</datalist>
           <div className="date-time"><input aria-label="Departure date" type="date" value={departureDate} onChange={(event) => setDepartureDate(event.target.value)} required /><input aria-label="Departure time" type="time" value={departureTime} onChange={(event) => setDepartureTime(event.target.value)} required /></div>
           <button type="submit">Find route</button>
         </form>
