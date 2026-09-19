@@ -113,6 +113,23 @@ class TestJourneyMatching(unittest.TestCase):
         self.assertEqual(status, "active")
         self.assertIsNone(disruption)
 
+    def test_tanah_merah_and_simei_codes(self):
+        from services.mrt_network import station_code_for_name
+        self.assertEqual(station_code_for_name("Tanah Merah", "EWL"), "EW4")
+        self.assertEqual(station_code_for_name("Simei", "EWL"), "EW3")
+
+    def test_branching_ccl_marina_bay_path(self):
+        # CC1 (Dhoby Ghaut) to CE2 (Marina Bay) via CC4 (Promenade)
+        stations = get_stations_traversed("CCL", "Dhoby Ghaut", "Marina Bay")
+        expected = ["CC1", "CC2", "CC3", "CC4", "CE1", "CE2"]
+        self.assertEqual(stations, expected)
+
+    def test_branching_ewl_changi_airport_path(self):
+        # EW8 (Paya Lebar) to CG2 (Changi Airport) via EW4 (Tanah Merah)
+        stations = get_stations_traversed("EWL", "Paya Lebar", "Changi Airport")
+        expected = ["EW8", "EW7", "EW6", "EW5", "EW4", "CG1", "CG2"]
+        self.assertEqual(stations, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

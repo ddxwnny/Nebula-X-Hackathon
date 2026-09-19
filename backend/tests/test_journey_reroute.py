@@ -62,6 +62,13 @@ class TestJourneyReroute(unittest.IsolatedAsyncioTestCase):
 
         # 1. Router must be called with current_position, NOT original origin
         mock_router.get_route.assert_called_once_with(current_pos, destination)
+        # 1. Router must be called with current_position, NOT original origin, and avoid parameters
+        mock_router.get_route.assert_called_once_with(
+            origin=current_pos,
+            destination=destination,
+            avoid_lines=["CCL"],
+            avoid_stations=["CC10", "CC9", "CC8"],
+        )
 
         # 2. Response verifies comparison
         self.assertEqual(response.status, "rerouted")
@@ -101,6 +108,30 @@ class TestJourneyReroute(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(ctx.exception.status_code, 502)
         self.assertEqual(journey.status, "reroute_failed")
+
+    def test_routing_service_selects_clean_itinerary(self):
+        # First itinerary uses disrupted Circle Line
+        itin_disrupted = {
+            "duration": 1800,
+            "legs": [
+                {"mode": "RAIL", "route": "CIRCLE LINE", "from": {"name": "Kent Ridge"}, "to": {"name": "Dhoby Ghaut"}}
+            ]
+        }
+        # Second itinerary uses North South Line (not disrupted)
+        itin_clean = {
+            "duration": 2100,
+            "legs": [
+                {"mode": "RAIL", "route": "NORTH SOUTH LINE", "from": {"name": "Bishan"}, "to": {"name": "Dhoby Ghaut"}}
+            ]
+        }
+        itineraries = [itin_disrupted, itin_clean]
+
+        selected = RoutingService._select_best_itinerary(
+            itineraries,
+            avoid_lines=["CCL"],
+            avoid_stations=["CC10", "CC9", "CC8"],
+        )
+        self.assertEqual(selected, itin_clean)
 
 
 if __name__ == "__main__":

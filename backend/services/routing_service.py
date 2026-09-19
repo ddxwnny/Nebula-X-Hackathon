@@ -11,6 +11,15 @@ class RoutingService:
     def __init__(self, client: RoutingClient | None = None): self.client = client or RoutingClient(OneMapClient(get_settings()))
 
     async def get_route(self, origin: Coordinates, destination: Coordinates, departure_date: date | None = None, departure_time: time | None = None) -> Route:
+    async def get_route(
+        self,
+        origin: Coordinates,
+        destination: Coordinates,
+        departure_date: date | None = None,
+        departure_time: time | None = None,
+        avoid_lines: list[str] | None = None,
+        avoid_stations: list[str] | None = None,
+    ) -> Route:
         payload = await self.client.get_public_transit_route(origin, destination, departure_date, departure_time)
         try: itineraries = payload["plan"]["itineraries"]
         except (KeyError, IndexError, TypeError) as error: raise HTTPException(status_code=404, detail="No public-transit route found") from error
@@ -20,10 +29,60 @@ class RoutingService:
             (item for item in itineraries if any(str(leg.get("mode", "")).upper() != "WALK" for leg in item.get("legs", []))),
             itineraries[0],
         )
+        try:
+            itineraries = payload["plan"]["itineraries"]
+        except (KeyError, IndexError, TypeError) as error:
+            raise HTTPException(status_code=404, detail="No public-transit route found") from error
+
+        itinerary = self._select_best_itinerary(itineraries, avoid_lines, avoid_stations)
         legs = [self._to_leg(leg) for leg in itinerary["legs"]]
         if not legs:
             raise HTTPException(status_code=404, detail="No route found for these locations")
         return Route(total_duration_min=round(float(itinerary["duration"]) / 60, 1), distance_m=round(sum(leg.distance_m for leg in legs), 1), legs=legs)
+
+    @staticmethod
+    def _select_best_itinerary(
+        itineraries: list[dict],
+        avoid_lines: list[str] | None = None,
+        avoid_stations: list[str] | None = None,
+    ) -> dict:
+        from services.mrt_network import check_station_overlap, get_stations_traversed, normalize_line_name
+
+        def is_affected(itin: dict) -> bool:
+            if not avoid_lines and not avoid_stations:
+                return False
+            for leg in itin.get("legs", []):
+                mode = str(leg.get("mode", "")).lower()
+                if mode in {"rail", "subway", "metro", "train"}:
+                    raw_line = str(leg.get("route") or "")
+                    canon_line = normalize_line_name(raw_line)
+                    if avoid_lines and any(canon_line == normalize_line_name(l) for l in avoid_lines):
+                        if not avoid_stations:
+                            return True
+                        from_name = leg.get("from", {}).get("name", "")
+                        to_name = leg.get("to", {}).get("name", "")
+                        leg_stations = get_stations_traversed(canon_line, from_name, to_name)
+                        if check_station_overlap(leg_stations, avoid_stations):
+                            return True
+            return False
+
+        if avoid_lines or avoid_stations:
+            clean_multimodal = next(
+                (item for item in itineraries if not is_affected(item) and any(str(leg.get("mode", "")).upper() != "WALK" for leg in item.get("legs", []))),
+                None,
+            )
+            if clean_multimodal:
+                return clean_multimodal
+
+            clean_any = next((item for item in itineraries if not is_affected(item)), None)
+            if clean_any:
+                return clean_any
+
+        # Default: Prefer multimodal, fall back to first
+        return next(
+            (item for item in itineraries if any(str(leg.get("mode", "")).upper() != "WALK" for leg in item.get("legs", []))),
+            itineraries[0],
+        )
 
     @staticmethod
     def _to_leg(leg: dict) -> RouteLeg:

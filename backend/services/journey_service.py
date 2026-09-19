@@ -237,6 +237,16 @@ class JourneyService:
     ) -> Route:
         # Fetch candidate public transit routes from router
         route = await router.get_route(start, destination)
+        avoid_lines = [disruption.line] if disruption and disruption.line else None
+        avoid_stations = disruption.stations if disruption and disruption.stations else None
+
+        # Fetch candidate public transit routes avoiding disrupted line/stations
+        route = await router.get_route(
+            origin=start,
+            destination=destination,
+            avoid_lines=avoid_lines,
+            avoid_stations=avoid_stations,
+        )
 
         # If a disruption is active, check if LTA mitigations can be attached
         if disruption:
