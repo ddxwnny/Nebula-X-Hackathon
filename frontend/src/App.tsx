@@ -14,7 +14,7 @@ type LocationSuggestion = { address: string };
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 const CARTODB_API_KEY = import.meta.env.VITE_CARTODB_API_KEY;
 const TILE_URL = CARTODB_API_KEY
-  ? `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?api_key=${CARTODB_API_KEY}`
+  ? `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${CARTODB_API_KEY}`
   : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
 function useLocationSuggestions(query: string) {
