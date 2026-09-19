@@ -221,7 +221,6 @@ __marimo__/
 frontend/node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
-
 # Personal task backlog
 thingstodoforbread.md
 
@@ -229,3 +228,6 @@ thingstodoforbread.md
 backend/data/covered_linkway/
 *.zip
 
+# Frontend test results
+frontend/test-results/
+frontend/playwright-report/
