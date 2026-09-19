@@ -19,13 +19,25 @@ class LTAClient:
     _exit_cache_until = datetime.min.replace(tzinfo=timezone.utc)
     _maintenance_cache: dict[str, tuple[datetime, dict[str, dict]]] = {}
 
+    _alert_cache: TrainServiceStatus | None = None
+    _alert_cache_until: datetime = datetime.min.replace(tzinfo=timezone.utc)
+
+    @classmethod
+    def clear_alert_cache(cls) -> None:
+        cls._alert_cache = None
+        cls._alert_cache_until = datetime.min.replace(tzinfo=timezone.utc)
+
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self._last_known_status: TrainServiceStatus | None = None
 
     # --- Train Service Alerts ---
 
-    async def get_train_service_alerts(self) -> TrainServiceStatus:
+    async def get_train_service_alerts(self, force_refresh: bool = False) -> TrainServiceStatus:
+        now = datetime.now(timezone.utc)
+        if not force_refresh and self._alert_cache is not None and now < self._alert_cache_until:
+            return self._alert_cache
+
         if not self.settings.lta_datamall_account_key:
             return self._fallback_status("unavailable", "Missing LTA DataMall AccountKey")
 
@@ -43,11 +55,25 @@ class LTAClient:
                 response.raise_for_status()
                 data = response.json()
         except (httpx.HTTPError, ValueError, TypeError) as err:
-            logger.warning("Failed to fetch TrainServiceAlerts: %s", err)
-            return self._fallback_status("stale" if self._last_known_status else "unavailable", str(err))
+            err_msg = str(err)
+            if isinstance(err, httpx.HTTPStatusError) and err.response is not None:
+                try:
+                    payload = err.response.json()
+                    fault_msg = payload.get("fault", {}).get("faultstring")
+                    if fault_msg:
+                        err_msg = f"{err.response.status_code} ({fault_msg})"
+                except Exception:
+                    pass
+            logger.warning("Failed to fetch TrainServiceAlerts from LTA DataMall: %s", err_msg)
+            fallback = self._fallback_status("stale" if self._last_known_status else "unavailable", err_msg)
+            self._alert_cache = fallback
+            self._alert_cache_until = now + timedelta(seconds=self.settings.disruption_poll_interval_seconds)
+            return fallback
 
         status = self._parse_payload(data)
         self._last_known_status = status
+        self._alert_cache = status
+        self._alert_cache_until = now + timedelta(seconds=self.settings.disruption_poll_interval_seconds)
         return status
 
     def _parse_payload(self, data: dict[str, Any]) -> TrainServiceStatus:

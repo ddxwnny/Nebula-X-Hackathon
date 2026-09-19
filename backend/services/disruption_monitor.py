@@ -27,7 +27,8 @@ class DisruptionMonitor:
         self._running = False
 
     def set_journey_service(self, journey_service: JourneyService) -> None:
-        self._journey_service = journey_service
+        if hasattr(journey_service, "_journeys"):
+            self._journey_service = journey_service
 
     async def check_for_updates(self) -> TrainServiceStatus:
         curr = await self._lta_client.get_train_service_alerts()
@@ -61,7 +62,7 @@ class DisruptionMonitor:
         previous_status: TrainServiceStatus | None,
         current_status: TrainServiceStatus,
     ) -> None:
-        if not self._journey_service:
+        if not self._journey_service or not hasattr(self._journey_service, "_journeys"):
             return
 
         for journey in list(self._journey_service._journeys.values()):
