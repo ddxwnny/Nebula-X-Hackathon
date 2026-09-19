@@ -16,9 +16,17 @@ class Settings(BaseSettings):
     onemap_password: str | None = None
     lta_datamall_account_key: str | None = None
     lta_station_exits_geojson_url: str = "https://api-open.data.gov.sg/v1/public/api/datasets/d_b39d3a0871985372d7e1637193335da5/poll-download"
+    lta_train_service_alerts_url: str = "https://datamall2.mytransport.sg/ltaodataservice/TrainServiceAlerts"
+    disruption_poll_interval_seconds: float = 30.0
+    enable_background_disruption_monitor: bool = False
     http_timeout_seconds: float = 12.0
+    display_interval_minutes: int = 5
+
+
+DISPLAY_INTERVAL_MINUTES: int = 5
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
