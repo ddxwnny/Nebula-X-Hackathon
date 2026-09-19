@@ -1,5 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query
+from models.disruptions import TrainServiceStatus
+from models.journeys import CreateJourneyRequest, CreateJourneyResponse, JourneyRerouteResponse, JourneyStatusResponse
 from models.requests import RerouteRequest, RouteRequest
 from models.responses import BusStopArrivals, LocationSuggestion, RainForecast, RerouteInfo, RouteResponse
 from services.geocoding_service import GeocodingService
@@ -11,9 +13,13 @@ from services.station_ground_level_service import StationGroundLevelService
 from services.weather_service import WeatherService
 from services.live_transit_service import LiveTransitService
 from services.route_pipeline import RoutePipeline
+from services.disruption_monitor import DisruptionMonitor
+from services.journey_service import JourneyService
 from services.routing_service import SGT
 
 router = APIRouter(tags=["routes"])
+_journey_service: JourneyService | None = None
+_disruption_monitor: DisruptionMonitor | None = None
 
 
 def get_geocoding_service() -> GeocodingService:
@@ -46,6 +52,20 @@ def get_weather_service() -> WeatherService:
 
 def get_live_transit_service() -> LiveTransitService:
     return LiveTransitService()
+
+
+def get_journey_service(routing_service: RoutingService = Depends(get_routing_service)) -> JourneyService:
+    global _journey_service
+    if _journey_service is None:
+        _journey_service = JourneyService(routing_service)
+    return _journey_service
+
+
+def get_disruption_monitor(journey_service: JourneyService = Depends(get_journey_service)) -> DisruptionMonitor:
+    global _disruption_monitor
+    if _disruption_monitor is None:
+        _disruption_monitor = DisruptionMonitor(journey_service=journey_service)
+    return _disruption_monitor
 
 
 @router.get("/geo/covered-linkways")
@@ -85,6 +105,49 @@ async def get_station_concourse_info(
 @router.get("/locations/search", response_model=list[LocationSuggestion])
 async def search_locations(query: str, geocoding_service: GeocodingService = Depends(get_geocoding_service)) -> list[LocationSuggestion]:
     return await geocoding_service.search(query)
+
+
+@router.get("/disruptions/status", response_model=TrainServiceStatus)
+async def get_disruptions_status(
+    disruption_monitor: DisruptionMonitor = Depends(get_disruption_monitor),
+) -> TrainServiceStatus:
+    return await disruption_monitor.check_for_updates()
+
+
+@router.post("/journeys", response_model=CreateJourneyResponse)
+async def create_journey(
+    request: CreateJourneyRequest,
+    journey_service: JourneyService = Depends(get_journey_service),
+    disruption_monitor: DisruptionMonitor = Depends(get_disruption_monitor),
+) -> CreateJourneyResponse:
+    journey = journey_service.create_journey(request)
+    if disruption_monitor.current_status:
+        journey_service.evaluate_journey_disruption(journey, disruption_monitor.current_status)
+    return CreateJourneyResponse(journey_id=journey.journey_id, status=journey.status, route_id=journey.route_id)
+
+
+@router.get("/journeys/{journey_id}/status", response_model=JourneyStatusResponse)
+async def get_journey_status(
+    journey_id: str,
+    journey_service: JourneyService = Depends(get_journey_service),
+    disruption_monitor: DisruptionMonitor = Depends(get_disruption_monitor),
+) -> JourneyStatusResponse:
+    alert_status = disruption_monitor.current_status
+    if not alert_status:
+        try:
+            alert_status = await disruption_monitor.check_for_updates()
+        except Exception:
+            alert_status = None
+    return journey_service.get_journey_status(journey_id, alert_status=alert_status)
+
+
+@router.post("/journeys/{journey_id}/reroute", response_model=JourneyRerouteResponse)
+async def reroute_journey(
+    journey_id: str,
+    journey_service: JourneyService = Depends(get_journey_service),
+    routing_service: RoutingService = Depends(get_routing_service),
+) -> JourneyRerouteResponse:
+    return await journey_service.reroute_journey(journey_id, routing_service)
 
 
 def get_route_pipeline(

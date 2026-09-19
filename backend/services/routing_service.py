@@ -5,6 +5,7 @@ from clients.onemap_client import OneMapClient
 from clients.routing_client import RoutingClient
 from config import get_settings
 from models.responses import Coordinates, Route, RouteLeg
+from services.mrt_network import normalize_line_name
 
 SGT = timezone(timedelta(hours=8))
 
@@ -12,20 +13,56 @@ SGT = timezone(timedelta(hours=8))
 class RoutingService:
     def __init__(self, client: RoutingClient | None = None): self.client = client or RoutingClient(OneMapClient(get_settings()))
 
-    async def get_route(self, origin: Coordinates, destination: Coordinates, departure_date: date | None = None, departure_time: time | None = None) -> Route:
+    async def get_route(
+        self,
+        origin: Coordinates,
+        destination: Coordinates,
+        departure_date: date | None = None,
+        departure_time: time | None = None,
+        avoid_lines: list[str] | None = None,
+        avoid_stations: list[str] | None = None,
+    ) -> Route:
         payload = await self.client.get_public_transit_route(origin, destination, departure_date, departure_time)
         try: itineraries = payload["plan"]["itineraries"]
         except (KeyError, IndexError, TypeError) as error: raise HTTPException(status_code=404, detail="No public-transit route found") from error
-        # Prefer a multimodal journey, but preserve a genuine walking-only
-        # result when OneMap does not offer public transit for the locations.
-        itinerary = next(
-            (item for item in itineraries if any(str(leg.get("mode", "")).upper() != "WALK" for leg in item.get("legs", []))),
-            itineraries[0],
-        )
+        itinerary = self._select_best_itinerary(itineraries, avoid_lines=avoid_lines, avoid_stations=avoid_stations)
         legs = [self._to_leg(leg) for leg in itinerary["legs"]]
         if not legs:
             raise HTTPException(status_code=404, detail="No route found for these locations")
         return Route(total_duration_min=round(float(itinerary["duration"]) / 60, 1), distance_m=round(sum(leg.distance_m for leg in legs), 1), legs=legs)
+
+    @classmethod
+    def _select_best_itinerary(
+        cls,
+        itineraries: list[dict],
+        avoid_lines: list[str] | None = None,
+        avoid_stations: list[str] | None = None,
+    ) -> dict:
+        candidates = [itinerary for itinerary in itineraries if not cls._avoids_disruption(itinerary, avoid_lines, avoid_stations)] or itineraries
+        if not candidates:
+            raise HTTPException(status_code=404, detail="No public-transit route found")
+        # Prefer a multimodal journey, but preserve a genuine walking-only result.
+        return next(
+            (item for item in candidates if any(str(leg.get("mode", "")).upper() != "WALK" for leg in item.get("legs", []))),
+            candidates[0],
+        )
+
+    @staticmethod
+    def _avoids_disruption(itinerary: dict, avoid_lines: list[str] | None, avoid_stations: list[str] | None) -> bool:
+        lines = {normalize_line_name(leg.get("route")) for leg in itinerary.get("legs", []) if leg.get("route")}
+        lines.discard(None)
+        wanted_lines = {normalize_line_name(line) for line in avoid_lines or []}
+        wanted_lines.discard(None)
+        if wanted_lines & lines:
+            return True
+        wanted_stations = {" ".join(str(station).upper().split()) for station in avoid_stations or []}
+        if not wanted_stations:
+            return False
+        for leg in itinerary.get("legs", []):
+            locations = (leg.get("from", {}).get("name"), leg.get("to", {}).get("name"))
+            if any(any(station in " ".join(str(location or "").upper().split()) for station in wanted_stations) for location in locations):
+                return True
+        return False
 
     @staticmethod
     def _to_leg(leg: dict) -> RouteLeg:
