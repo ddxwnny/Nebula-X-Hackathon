@@ -34,29 +34,66 @@ class LtaDataMallClient:
         self._exit_cache_until = now + timedelta(hours=24)
         return self._exit_cache
 
+    async def all_lift_maintenance(self) -> list[dict]:
+        """Fetch all active lift/facility maintenance events across the entire rail network."""
+        now = datetime.now(timezone.utc)
+        cached = self._maintenance_cache.get("__ALL__")
+        if cached and now < cached[0]:
+            return list(cached[1].values())
+        settings = get_settings()
+        if not settings.lta_datamall_account_key:
+            return []
+        headers = {"AccountKey": settings.lta_datamall_account_key, "accept": "application/json"}
+        try:
+            async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
+                response = await client.get(f"{self.BASE_URL}/v2/FacilitiesMaintenance", headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+                raw_items = payload.get("value", payload.get("Value", []))
+                # Check if payload contains directly array of maintenance or an external link
+                if raw_items and any("LiftDesc" in item or "StationName" in item for item in raw_items):
+                    items = raw_items
+                else:
+                    link = next((item.get("Link") for item in raw_items if item.get("Link")), None)
+                    if link:
+                        file_response = await client.get(link)
+                        file_response.raise_for_status()
+                        items = file_response.json().get("value", file_response.json())
+                    else:
+                        items = []
+                records = {}
+                for item in items:
+                    stn = item.get("StationCode") or item.get("StationName") or "UNKNOWN"
+                    lift_id = str(item.get("LiftID") or item.get("LiftId") or item.get("FacilityId") or "")
+                    records[f"{stn}_{lift_id}_{item.get('LiftDesc', '')}"] = item
+                self._maintenance_cache["__ALL__"] = (now + timedelta(minutes=5), records)
+                return list(records.values())
+        except Exception:
+            return []
+
     async def lift_statuses(self, station_code: str) -> dict[str, dict]:
         now = datetime.now(timezone.utc)
         cached = self._maintenance_cache.get(station_code)
         if cached and now < cached[0]:
             return cached[1]
-        settings = get_settings()
-        if not settings.lta_datamall_account_key:
-            return {}
-        headers = {"AccountKey": settings.lta_datamall_account_key, "accept": "application/json"}
-        async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
-            response = await client.get(f"{self.BASE_URL}/v2/FacilitiesMaintenance", params={"StationCode": station_code}, headers=headers)
-            response.raise_for_status()
-            links = response.json().get("value", response.json().get("Value", []))
-            link = next((item.get("Link") for item in links if item.get("Link")), None)
-            if not link:
-                statuses: dict[str, dict] = {}
-            else:
-                file_response = await client.get(link)
-                file_response.raise_for_status()
-                records = file_response.json().get("value", file_response.json())
-                statuses = {self._lift_id(item): self._normalise_lift(item, station_code) for item in records if self._lift_id(item)}
-        self._maintenance_cache[station_code] = (now + timedelta(minutes=5), statuses)
-        return statuses
+        all_maintenance = await self.all_lift_maintenance()
+        station_normal = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
+        matched: dict[str, dict] = {}
+        for idx, item in enumerate(all_maintenance):
+            item_stn = str(item.get("StationCode") or "").upper()
+            item_name = str(item.get("StationName") or "").upper()
+            if station_normal in item_stn or station_normal in item_name or item_name in station_normal:
+                desc = str(item.get("LiftDesc", ""))
+                lift_id = str(item.get("LiftID") or f"LIFT-{idx}")
+                matched[lift_id] = {
+                    "status": "maintenance",
+                    "station_id": station_code,
+                    "lift_id": lift_id,
+                    "description": desc,
+                    "exit_id": "Exit A" if "EXIT A" in desc.upper() else "Exit B" if "EXIT B" in desc.upper() else "Exit C" if "EXIT C" in desc.upper() else "Exit 1" if "EXIT 1" in desc.upper() else "Exit 2" if "EXIT 2" in desc.upper() else None,
+                }
+        self._maintenance_cache[station_code] = (now + timedelta(minutes=5), matched)
+        return matched
 
     @staticmethod
     def _normalise_exit(row: dict) -> dict | None:

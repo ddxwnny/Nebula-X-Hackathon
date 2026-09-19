@@ -72,6 +72,19 @@ class StationAccess(BaseModel):
     lon: float
 
 
+class ExitMarker(BaseModel):
+    id: str
+    station_id: str
+    station_name: str
+    exit_id: str
+    exit_name: str
+    lat: float
+    lon: float
+    has_lift: bool = True
+    lift_status: str = "operational"  # operational, maintenance, or no_lift
+    is_selected: bool = False
+
+
 class ExitRoutingMetadata(BaseModel):
     enabled: bool
     fallback_to_station_centroid: bool
@@ -79,3 +92,4 @@ class ExitRoutingMetadata(BaseModel):
     destination: StationAccess | None = None
     explanation: str | None = None
     fallback_reason: str | None = None
+    candidate_exits: list[ExitMarker] = Field(default_factory=list)
