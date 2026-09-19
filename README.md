@@ -11,7 +11,6 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-export ONEMAP_ACCESS_TOKEN="your-onemap-access-token"
 uvicorn main:app --reload
 ```
 
