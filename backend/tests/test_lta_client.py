@@ -104,10 +104,33 @@ class TestLTAClient(unittest.IsolatedAsyncioTestCase):
 
         # Second call fails with HTTP 500
         mock_get.side_effect = httpx.HTTPStatusError("500 Server Error", request=None, response=None)
-        status2 = await self.client.get_train_service_alerts()
+        status2 = await self.client.get_train_service_alerts(force_refresh=True)
         self.assertEqual(status2.data_status, "stale")
         self.assertEqual(status2.status, 2)
         self.assertEqual(len(status2.affected_segments), 1)
+
+    @patch("httpx.AsyncClient.get")
+    async def test_alert_caching(self, mock_get):
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = lambda: None
+        mock_response.json = lambda: {
+            "value": {
+                "Status": 1,
+                "AffectedSegments": [],
+                "Message": [],
+            }
+        }
+        mock_get.return_value = mock_response
+        LTAClient.clear_alert_cache()
+
+        status1 = await self.client.get_train_service_alerts()
+        self.assertEqual(status1.status, 1)
+        self.assertEqual(mock_get.call_count, 1)
+
+        # Cached call should not trigger httpx.get again
+        status2 = await self.client.get_train_service_alerts()
+        self.assertEqual(status2.status, 1)
+        self.assertEqual(mock_get.call_count, 1)
 
     @patch("httpx.AsyncClient.get")
     async def test_station_exits_fetch_and_cache(self, mock_get):

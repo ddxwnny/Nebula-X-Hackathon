@@ -61,7 +61,7 @@ export function singaporeNow() {
 }
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(
-    `${import.meta.env.VITE_API_URL ?? "http://localhost:8000"}/api/v1${path}`,
+    `${import.meta.env.VITE_API_URL ?? ""}/api/v1${path}`,
     { ...init, signal: init.signal ?? AbortSignal.timeout(25000) },
   );
   if (!response.ok)

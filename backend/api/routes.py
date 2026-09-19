@@ -40,6 +40,9 @@ def get_exit_routing_service() -> ExitRoutingService:
 
 def get_journey_service(routing_service: RoutingService = Depends(get_routing_service)) -> JourneyService:
     global _journey_service
+    from fastapi.params import Depends as DependsType
+    if isinstance(routing_service, DependsType) or routing_service is None:
+        routing_service = get_routing_service()
     if _journey_service is None:
         _journey_service = JourneyService(routing_service)
     return _journey_service
@@ -47,9 +50,12 @@ def get_journey_service(routing_service: RoutingService = Depends(get_routing_se
 
 def get_disruption_monitor(journey_service: JourneyService = Depends(get_journey_service)) -> DisruptionMonitor:
     global _disruption_monitor
+    from fastapi.params import Depends as DependsType
+    if isinstance(journey_service, DependsType) or journey_service is None:
+        journey_service = get_journey_service()
     if _disruption_monitor is None:
         _disruption_monitor = DisruptionMonitor(journey_service=journey_service)
-    elif _disruption_monitor._journey_service is None:
+    elif _disruption_monitor._journey_service is None or isinstance(_disruption_monitor._journey_service, DependsType):
         _disruption_monitor.set_journey_service(journey_service)
     return _disruption_monitor
 

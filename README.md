@@ -22,6 +22,23 @@ npm install
 npm run dev
 ```
 
+## Run with Docker
+
+Run the entire application (FastAPI backend + Vite/React frontend) with Docker Compose:
+
+1. Ensure `.env` is configured with your credentials:
+   ```bash
+   cp .env.example .env
+   # Add your ONEMAP_ACCESS_TOKEN and optional LTA_DATAMALL_ACCOUNT_KEY
+   ```
+
+2. Build and start the containers:
+   ```bash
+   docker compose up --build
+   ```
+
+3. Open `http://localhost:5173` in your browser. The backend API is available at `http://localhost:8000` (docs at `http://localhost:8000/docs`).
+
 `POST /api/v1/routes/plan` accepts an `address` or a `lat`/`lon` pair for origin and destination. Configure `ONEMAP_ACCESS_TOKEN` in `.env` before running it. Without OneMap authentication, it returns `503` instead of manufacturing transit legs.
 
 Set `preferences.step_free` to request a step-free route. The response includes
