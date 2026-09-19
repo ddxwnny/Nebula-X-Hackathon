@@ -85,13 +85,34 @@ export type RouteResponse = {
     ramps_used: number;
   };
   decision: { reason: string; summary: string; details: string[] };
+  crowd_assessment?: {
+    status: string;
+    overall_level: "low" | "medium" | "high" | "unknown" | string;
+    recommendation: string;
+    tradeoff?: string | null;
+    stations: Array<{
+      line: string;
+      station: string;
+      live_level: string;
+      forecast_level: string;
+    }>;
+  } | null;
   verification?: VerificationStep[];
   rain_forecast?: {
     rain_along_route: boolean;
     rain_severity: string;
+    currently_raining: boolean;
+    current_rainfall_mm: number;
+    point_forecasts?: Array<{
+      lat: number;
+      lon: number;
+      rain_expected: boolean;
+      rain_severity: string;
+      forecast_area: string;
+      forecast_text: string;
+      valid_period: string;
+    }>;
     recommendation: string;
-    dry_route_available: boolean;
-    dry_route_additional_min?: number;
   } | null;
   reroute?: {
     reason?: string | null;
@@ -99,6 +120,17 @@ export type RouteResponse = {
     replanned_at: string;
     exits_checked: number;
   } | null;
+};
+
+export type BusStopArrivals = {
+  stop_code: string;
+  status: string;
+  fetched_at: string;
+  services: Array<{
+    service_no: string;
+    operator?: string | null;
+    next_buses: BusEta[];
+  }>;
 };
 
 export type LocationSuggestion = {
