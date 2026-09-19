@@ -19,12 +19,16 @@ type DurationRange = {
 
 type RouteResponse = {
   request_id?: string;
-  duration_minutes?: DurationRange;
+  duration_minutes?: number;
+  duration_range?: DurationRange;
+  duration_display?: string;
   origin: { lat: number; lon: number; label?: string };
   destination: { lat: number; lon: number; label?: string };
   recommended_route: {
-    duration_minutes?: DurationRange;
-    total_duration_min?: number | DurationRange;
+    duration_minutes?: number;
+    duration_range?: DurationRange;
+    duration_display?: string;
+    total_duration_min?: number;
     legs: RouteLeg[];
     exit_routing?: {
       enabled: boolean;
@@ -189,11 +193,20 @@ function legStyle(mode: string, lineName?: string) {
   return { color: prefix ? mrtColors[prefix] : "#2469b1", weight: 6 };
 }
 
-function formatDuration(duration?: number | DurationRange): string {
-  if (!duration && duration !== 0) return "0";
-  if (typeof duration === "number") return `${duration}`;
-  return `${duration.min}–${duration.max}`;
+function formatDuration(duration?: number | DurationRange | string): string {
+  if (!duration && duration !== 0) return "0 min";
+  if (typeof duration === "string") return duration;
+  if (typeof duration === "number") {
+    const rounded = Math.round(duration);
+    if (rounded < 60) return `${rounded} min`;
+    const hours = Math.floor(rounded / 60);
+    const rem = rounded % 60;
+    if (rem === 0) return hours === 1 ? "1 hour" : `${hours} hours`;
+    return `${hours === 1 ? "1 hour" : `${hours} hours`} ${rem} min`;
+  }
+  return `${duration.min}–${duration.max} min`;
 }
+
 
 export default function App() {
   const [origin, setOrigin] = useState("");
@@ -313,7 +326,13 @@ export default function App() {
     ? rerouteData.new_route.legs
     : route?.recommended_route.legs ?? [];
 
-  const originalRouteDuration = route?.recommended_route.duration_minutes ?? route?.duration_minutes ?? route?.recommended_route.total_duration_min ?? 0;
+  const originalRouteDuration =
+    route?.recommended_route.duration_display ??
+    route?.duration_display ??
+    route?.recommended_route.duration_minutes ??
+    route?.duration_minutes ??
+    route?.recommended_route.total_duration_min ??
+    0;
   const displayedDuration = (activeRouteView === "rerouted" && rerouteData)
     ? rerouteData.new_route.remaining_duration_min
     : originalRouteDuration;
@@ -354,7 +373,7 @@ export default function App() {
 
         {route && (
           <section className="route-details">
-            <h2>{formatDuration(displayedDuration)} min</h2>
+            <h2>{formatDuration(displayedDuration)}</h2>
             <p className="muted">{route.origin.label ?? "Origin"} to {route.destination.label ?? "Destination"}</p>
 
             {/* Disruption Alert & Reroute View Controls */}
@@ -392,11 +411,12 @@ export default function App() {
                         className={`reroute-toggle-btn ${activeRouteView === "original" ? "active" : ""}`}
                         onClick={() => setActiveRouteView("original")}
                       >
-                        Original ({formatDuration(originalRouteDuration)} min)
+                        Original ({formatDuration(originalRouteDuration)})
                       </button>
                     </div>
                   </>
                 )}
+
 
               </div>
             )}

@@ -78,9 +78,12 @@ async def plan_route(request: RouteRequest, geocoding_service: GeocodingService 
         destination=destination,
         recommended_route=route,
         duration_minutes=route.duration_minutes,
+        duration_range=route.duration_range,
+        duration_display=route.duration_display,
         accessibility=accessibility,
         decision=decision,
     )
+
 
 
 

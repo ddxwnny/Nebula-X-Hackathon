@@ -1,6 +1,7 @@
 from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
-from utils.duration import DurationRange, duration_to_range
+from utils.duration import DurationRange, duration_to_range, format_duration_range
+
 
 
 class Coordinates(BaseModel):
@@ -48,29 +49,27 @@ class RouteLeg(BaseModel):
 
 class Route(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    duration_minutes: DurationRange = Field(
+    duration_minutes: float = Field(
         validation_alias=AliasChoices(
             "duration_minutes",
             "durationMinutes",
             "total_duration_min",
             "totalDurationMin",
+            "raw_duration_minutes",
+            "rawDurationMinutes",
         )
+    )
+    duration_range: DurationRange = Field(
+        validation_alias=AliasChoices("duration_range", "durationRange")
+    )
+    duration_display: str = Field(
+        validation_alias=AliasChoices("duration_display", "durationDisplay")
     )
     distance_m: float = Field(validation_alias=AliasChoices("distance_m", "distanceM"))
     legs: list[RouteLeg]
     exit_routing: "ExitRoutingMetadata | None" = Field(
         default=None,
         validation_alias=AliasChoices("exit_routing", "exitRouting"),
-    )
-    raw_duration_minutes: float | None = Field(
-        default=None,
-        exclude=True,
-        validation_alias=AliasChoices(
-            "raw_duration_minutes",
-            "rawDurationMinutes",
-            "total_duration_min",
-            "totalDurationMin",
-        ),
     )
 
     @model_validator(mode="before")
@@ -80,6 +79,7 @@ class Route(BaseModel):
             raw = data.get("raw_duration_minutes")
             total = data.get("total_duration_min") if "total_duration_min" in data else data.get("totalDurationMin")
             dur = data.get("duration_minutes") if "duration_minutes" in data else data.get("durationMinutes")
+            d_range = data.get("duration_range") if "duration_range" in data else data.get("durationRange")
 
             raw_val = None
             if isinstance(raw, (int, float)) and not isinstance(raw, bool):
@@ -88,26 +88,28 @@ class Route(BaseModel):
                 raw_val = float(total)
             elif isinstance(dur, (int, float)) and not isinstance(dur, bool):
                 raw_val = float(dur)
+            elif isinstance(dur, (dict, DurationRange)):
+                d_range = dur
+                raw_val = float(dur.min if isinstance(dur, DurationRange) else dur.get("min", 0))
 
             if raw_val is not None:
-                data["raw_duration_minutes"] = raw_val
-                if "duration_minutes" not in data or isinstance(data.get("duration_minutes"), (int, float)):
-                    data["duration_minutes"] = duration_to_range(raw_val)
+                data["duration_minutes"] = raw_val
+                if "duration_range" not in data or data.get("duration_range") is None:
+                    data["duration_range"] = d_range if d_range is not None else duration_to_range(raw_val)
+                if "duration_display" not in data or data.get("duration_display") is None:
+                    data["duration_display"] = format_duration_range(data["duration_range"])
         return data
 
     @property
     def total_duration_min(self) -> float:
-        if self.raw_duration_minutes is not None:
-            return self.raw_duration_minutes
-        return float(self.duration_minutes.min)
+        return self.duration_minutes
 
     @total_duration_min.setter
-    def total_duration_min(self, value: float | DurationRange) -> None:
+    def total_duration_min(self, value: float) -> None:
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            self.raw_duration_minutes = float(value)
-            self.duration_minutes = duration_to_range(float(value))
-        elif isinstance(value, DurationRange):
-            self.duration_minutes = value
+            self.duration_minutes = float(value)
+            self.duration_range = duration_to_range(float(value))
+            self.duration_display = format_duration_range(self.duration_range)
 
 
 class RouteResponse(BaseModel):
@@ -118,16 +120,30 @@ class RouteResponse(BaseModel):
     recommended_route: Route = Field(validation_alias=AliasChoices("recommended_route", "recommendedRoute"))
     accessibility: "AccessibilityResult"
     decision: "RouteDecision"
-    duration_minutes: DurationRange | None = Field(
+    duration_minutes: float | None = Field(
         default=None,
         validation_alias=AliasChoices("duration_minutes", "durationMinutes"),
     )
+    duration_range: DurationRange | None = Field(
+        default=None,
+        validation_alias=AliasChoices("duration_range", "durationRange"),
+    )
+    duration_display: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("duration_display", "durationDisplay"),
+    )
 
     @model_validator(mode="after")
-    def populate_duration_minutes(self) -> "RouteResponse":
-        if self.duration_minutes is None and self.recommended_route:
-            self.duration_minutes = self.recommended_route.duration_minutes
+    def populate_duration_fields(self) -> "RouteResponse":
+        if self.recommended_route:
+            if self.duration_minutes is None:
+                self.duration_minutes = self.recommended_route.duration_minutes
+            if self.duration_range is None:
+                self.duration_range = self.recommended_route.duration_range
+            if self.duration_display is None:
+                self.duration_display = self.recommended_route.duration_display
         return self
+
 
 
 

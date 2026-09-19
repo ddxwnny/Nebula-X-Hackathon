@@ -12,7 +12,12 @@ from models.responses import (
     RouteDecision,
     RouteLeg,
 )
-from utils.duration import DISPLAY_INTERVAL_MINUTES, duration_to_range
+from utils.duration import (
+    DISPLAY_INTERVAL_MINUTES,
+    duration_to_range,
+    format_duration_range,
+    format_duration_unit,
+)
 
 
 class TestDurationRangeUnit(unittest.TestCase):
@@ -35,34 +40,67 @@ class TestDurationRangeUnit(unittest.TestCase):
         self.assertEqual(boundary_5.min, 5)
         self.assertEqual(boundary_5.max, 10)
 
-    def test_short_duration_does_not_return_zero(self):
-        result = duration_to_range(1.2)
-        self.assertGreaterEqual(result.min, 1)
-        self.assertEqual(result.max, 5)
+    def test_short_duration_returns_rounded_single_value(self):
+        r_1_2 = duration_to_range(1.2)
+        self.assertEqual(r_1_2.min, 1)
+        self.assertEqual(r_1_2.max, 1)
 
-        r_2_5 = duration_to_range(2.5)
-        self.assertEqual(r_2_5.min, 2)
-        self.assertEqual(r_2_5.max, 5)
+        r_2_1 = duration_to_range(2.1)
+        self.assertEqual(r_2_1.min, 2)
+        self.assertEqual(r_2_1.max, 2)
+
+        r_3_4 = duration_to_range(3.4)
+        self.assertEqual(r_3_4.min, 3)
+        self.assertEqual(r_3_4.max, 3)
 
         r_4_8 = duration_to_range(4.8)
-        self.assertEqual(r_4_8.min, 4)
+        self.assertEqual(r_4_8.min, 5)
         self.assertEqual(r_4_8.max, 5)
 
-        r_sub_one = duration_to_range(0.3)
-        self.assertEqual(r_sub_one.min, 1)
-        self.assertEqual(r_sub_one.max, 5)
+        r_zero = duration_to_range(0.0)
+        self.assertEqual(r_zero.min, 0)
+        self.assertEqual(r_zero.max, 0)
 
     def test_duration_is_inside_range(self):
-        test_durations = [1.2, 3.4, 5.0, 12.7, 37.2, 52.4, 61.8, 84.1, 118.0]
+        test_durations = [5.0, 12.7, 37.2, 52.4, 61.8, 84.1, 118.0]
         for duration in test_durations:
             with self.subTest(duration=duration):
                 result = duration_to_range(duration)
                 self.assertLessEqual(result.min, duration)
                 self.assertLessEqual(duration, result.max)
-                self.assertGreaterEqual(result.min, 1)
                 self.assertGreater(result.max, result.min)
-                if duration >= DISPLAY_INTERVAL_MINUTES:
-                    self.assertEqual(result.max - result.min, DISPLAY_INTERVAL_MINUTES)
+                self.assertEqual(result.max - result.min, DISPLAY_INTERVAL_MINUTES)
+
+    def test_format_duration_unit(self):
+        self.assertEqual(format_duration_unit(45), "45 min")
+        self.assertEqual(format_duration_unit(60), "1 hour")
+        self.assertEqual(format_duration_unit(67), "1 hour 7 min")
+        self.assertEqual(format_duration_unit(120), "2 hours")
+        self.assertEqual(format_duration_unit(125), "2 hours 5 min")
+        self.assertEqual(format_duration_unit(0), "0 min")
+        self.assertEqual(format_duration_unit(1), "1 min")
+
+    def test_format_duration_range(self):
+        # Durations under 60 minutes
+        self.assertEqual(format_duration_range(DurationRange(min=50, max=55)), "50–55 min")
+        self.assertEqual(format_duration_range(DurationRange(min=35, max=40)), "35–40 min")
+        # Crossing hour boundary
+        self.assertEqual(format_duration_range(DurationRange(min=55, max=60)), "55 min–1 hour")
+        self.assertEqual(format_duration_range(DurationRange(min=60, max=65)), "1 hour–1 hour 5 min")
+        self.assertEqual(format_duration_range(DurationRange(min=65, max=70)), "1 hour 5 min–1 hour 10 min")
+        self.assertEqual(format_duration_range(DurationRange(min=90, max=95)), "1 hour 30 min–1 hour 35 min")
+        self.assertEqual(format_duration_range(DurationRange(min=115, max=120)), "1 hour 55 min–2 hours")
+        self.assertEqual(format_duration_range(DurationRange(min=115, max=125)), "1 hour 55 min–2 hours 5 min")
+        self.assertEqual(format_duration_range(DurationRange(min=120, max=125)), "2 hours–2 hours 5 min")
+        # Short journeys (< 5 min)
+        self.assertEqual(format_duration_range(3.2), "3 min")
+        self.assertEqual(format_duration_range(2.1), "2 min")
+        self.assertEqual(format_duration_range(4.8), "5 min")
+        self.assertEqual(format_duration_range(0.0), "0 min")
+        # Direct float conversion
+        self.assertEqual(format_duration_range(52.4), "50–55 min")
+        self.assertEqual(format_duration_range(67.2), "1 hour 5 min–1 hour 10 min")
+        self.assertEqual(format_duration_range(121.3), "2 hours–2 hours 5 min")
 
     def test_invalid_values_raise_error(self):
         invalid_inputs = [None, -1, -0.1, float("nan"), float("inf"), float("-inf")]
@@ -167,22 +205,21 @@ class TestDurationRangeAPIIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertIn("legs", rec_route)
             self.assertEqual(len(rec_route["legs"]), 3)
 
-            # 3. duration_minutes follows the new schema with min and max
+            # 3. duration_minutes preserves numerical float
             self.assertIn("duration_minutes", data)
-            self.assertEqual(data["duration_minutes"], {"min": 50, "max": 55})
-            self.assertEqual(data["duration_minutes"]["min"], 50)
-            self.assertEqual(data["duration_minutes"]["max"], 55)
+            self.assertEqual(data["duration_minutes"], 52.4)
+            self.assertEqual(rec_route["duration_minutes"], 52.4)
 
-            self.assertIn("duration_minutes", rec_route)
-            self.assertEqual(rec_route["duration_minutes"], {"min": 50, "max": 55})
+            # 4. duration_range provides min and max integers
+            self.assertIn("duration_range", data)
+            self.assertEqual(data["duration_range"], {"min": 50, "max": 55})
+            self.assertEqual(rec_route["duration_range"], {"min": 50, "max": 55})
 
-            # 4. No decimal duration is exposed in the public response
-            # Neither top-level duration_minutes nor recommended_route.duration_minutes should be a float
-            self.assertIsInstance(data["duration_minutes"]["min"], int)
-            self.assertIsInstance(data["duration_minutes"]["max"], int)
-            self.assertNotIn("total_duration_min", rec_route)
+            # 5. duration_display provides human-readable formatted string
+            self.assertIn("duration_display", data)
+            self.assertEqual(data["duration_display"], "50–55 min")
+            self.assertEqual(rec_route["duration_display"], "50–55 min")
 
 
 if __name__ == "__main__":
     unittest.main()
-

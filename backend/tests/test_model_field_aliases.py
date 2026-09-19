@@ -110,8 +110,10 @@ class TestModelFieldAliases(unittest.TestCase):
             "distance_m": 5000.0,
             "legs": [],
         })
-        self.assertEqual(r1.duration_minutes.min, 50)
-        self.assertEqual(r1.duration_minutes.max, 55)
+        self.assertEqual(r1.duration_minutes, 52.4)
+        self.assertEqual(r1.duration_range.min, 50)
+        self.assertEqual(r1.duration_range.max, 55)
+        self.assertEqual(r1.duration_display, "50–55 min")
         self.assertEqual(r1.total_duration_min, 52.4)
 
         # Validate with camelCase totalDurationMin
@@ -120,26 +122,35 @@ class TestModelFieldAliases(unittest.TestCase):
             "distance_m": 5000.0,
             "legs": [],
         })
-        self.assertEqual(r2.duration_minutes.min, 30)
-        self.assertEqual(r2.duration_minutes.max, 35)
+        self.assertEqual(r2.duration_minutes, 30.0)
+        self.assertEqual(r2.duration_range.min, 30)
+        self.assertEqual(r2.duration_range.max, 35)
+        self.assertEqual(r2.duration_display, "30–35 min")
 
-        # Validate with duration_minutes object
+        # Validate with duration_minutes and duration_range object
         r3 = Route.model_validate({
-            "duration_minutes": {"min": 50, "max": 55},
+            "duration_minutes": 52.4,
+            "duration_range": {"min": 50, "max": 55},
             "distance_m": 5000.0,
             "legs": [],
         })
-        self.assertEqual(r3.duration_minutes.min, 50)
-        self.assertEqual(r3.duration_minutes.max, 55)
+        self.assertEqual(r3.duration_minutes, 52.4)
+        self.assertEqual(r3.duration_range.min, 50)
+        self.assertEqual(r3.duration_range.max, 55)
+        self.assertEqual(r3.duration_display, "50–55 min")
 
-        # Validate with camelCase durationMinutes object
+        # Validate with camelCase durationMinutes and durationRange object
         r4 = Route.model_validate({
-            "durationMinutes": {"min": 50, "max": 55},
+            "durationMinutes": 67.2,
+            "durationRange": {"min": 65, "max": 70},
             "distance_m": 5000.0,
             "legs": [],
         })
-        self.assertEqual(r4.duration_minutes.min, 50)
-        self.assertEqual(r4.duration_minutes.max, 55)
+        self.assertEqual(r4.duration_minutes, 67.2)
+        self.assertEqual(r4.duration_range.min, 65)
+        self.assertEqual(r4.duration_range.max, 70)
+        self.assertEqual(r4.duration_display, "1 hour 5 min–1 hour 10 min")
+
 
 
 
