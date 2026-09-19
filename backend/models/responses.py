@@ -37,6 +37,7 @@ class RouteResponse(BaseModel):
     recommended_route: Route
     accessibility: "AccessibilityResult"
     decision: "RouteDecision"
+    rain_forecast: "RainForecast | None" = None
 
 
 class LiftUse(BaseModel):
@@ -81,7 +82,11 @@ class ExitMarker(BaseModel):
     lat: float
     lon: float
     has_lift: bool = True
-    lift_status: str = "operational"  # operational, maintenance, or no_lift
+    # LTA publishes lift outages, not a per-exit lift inventory, so the absence
+    # of an outage is reported as such rather than as a confirmed working lift.
+    lift_status: str = "no_reported_outage"  # no_reported_outage or maintenance
+    lift_alerts: list[str] = Field(default_factory=list)
+    station_lift_alerts: list[str] = Field(default_factory=list)
     is_selected: bool = False
 
 
@@ -93,3 +98,22 @@ class ExitRoutingMetadata(BaseModel):
     explanation: str | None = None
     fallback_reason: str | None = None
     candidate_exits: list[ExitMarker] = Field(default_factory=list)
+
+
+class RainPointForecast(BaseModel):
+    lat: float
+    lon: float
+    rain_expected: bool
+    rain_severity: str
+    forecast_area: str
+    forecast_text: str
+    valid_period: str
+
+
+class RainForecast(BaseModel):
+    rain_along_route: bool
+    rain_severity: str
+    currently_raining: bool
+    current_rainfall_mm: float
+    point_forecasts: list[RainPointForecast]
+    recommendation: str

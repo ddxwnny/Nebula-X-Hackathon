@@ -71,9 +71,25 @@ class LtaDataMallClient:
         except Exception:
             return []
 
+    def inject_simulated_maintenance(self, station_code: str, exit_id: str | None = "Exit A", description: str = "Lift maintenance in progress") -> None:
+        now = datetime.now(timezone.utc)
+        target = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
+        simulated = {
+            "SIM-LIFT-1": {
+                "status": "maintenance",
+                "station_id": target,
+                "lift_id": "SIM-LIFT-1",
+                "description": f"Simulated: {description}",
+                "exit_id": exit_id or "Exit A",
+            }
+        }
+        self._maintenance_cache[target] = (now + timedelta(hours=1), simulated)
+        self._maintenance_cache[station_code] = (now + timedelta(hours=1), simulated)
+
     async def lift_statuses(self, station_code: str) -> dict[str, dict]:
         now = datetime.now(timezone.utc)
-        cached = self._maintenance_cache.get(station_code)
+        station_normal = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
+        cached = self._maintenance_cache.get(station_code) or self._maintenance_cache.get(station_normal)
         if cached and now < cached[0]:
             return cached[1]
         all_maintenance = await self.all_lift_maintenance()

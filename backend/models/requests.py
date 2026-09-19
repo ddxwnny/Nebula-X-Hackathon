@@ -30,6 +30,7 @@ class Location(BaseModel):
 class RoutePreferences(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     step_free: bool = Field(default=False, validation_alias="stepFree", serialization_alias="stepFree")
+    simulate_lift_maintenance: str | None = Field(default=None, validation_alias="simulateLiftMaintenance", serialization_alias="simulateLiftMaintenance")
 
 
 class RouteRequest(BaseModel):
