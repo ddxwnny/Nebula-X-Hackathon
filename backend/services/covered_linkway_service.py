@@ -36,8 +36,16 @@ class CoveredLinkwayService:
         except Exception:
             return []
 
-    def find_linkways_near_route(self, min_lat: float, max_lat: float, min_lon: float, max_lon: float, buffer: float = 0.005) -> list[dict]:
-        """Filter linkway features within a bounding box buffer."""
+    def find_linkways_near_route(
+        self,
+        min_lat: float,
+        max_lat: float,
+        min_lon: float,
+        max_lon: float,
+        buffer: float = 0.005,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Filter linkway features within a bounding box buffer. If limit is None, returns all matches."""
         b_min_lat, b_max_lat = min_lat - buffer, max_lat + buffer
         b_min_lon, b_max_lon = min_lon - buffer, max_lon + buffer
 
@@ -50,7 +58,7 @@ class CoveredLinkwayService:
             if not (f_max_lat < b_min_lat or f_min_lat > b_max_lat or f_max_lon < b_min_lon or f_min_lon > b_max_lon):
                 clean_feat = {k: v for k, v in feature.items() if k != "_bbox"}
                 matches.append(clean_feat)
-                if len(matches) >= 500:
+                if limit and len(matches) >= limit:
                     break
 
         return matches

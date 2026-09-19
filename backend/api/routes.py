@@ -37,9 +37,10 @@ async def get_covered_linkways(
     max_lat: float,
     min_lon: float,
     max_lon: float,
+    limit: int | None = None,
     covered_service: CoveredLinkwayService = Depends(get_covered_linkway_service),
 ) -> list[dict]:
-    return covered_service.find_linkways_near_route(min_lat, max_lat, min_lon, max_lon)
+    return covered_service.find_linkways_near_route(min_lat, max_lat, min_lon, max_lon, limit=limit)
 
 
 @router.get("/locations/search", response_model=list[LocationSuggestion])

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { CircleMarker, GeoJSON, MapContainer, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 type RouteResponse = {
@@ -74,31 +74,34 @@ export default function App() {
   const routePoints: [number, number][] = route ? route.recommended_route.legs.flatMap((leg) => leg.geometry.map((point) => [point.lat, point.lon] as [number, number])) : [];
   const points: [number, number][] = routePoints.length > 1 ? routePoints : route ? [[route.origin.lat, route.origin.lon], [route.destination.lat, route.destination.lon]] : [[1.3521, 103.8198]];
 
+  // Compute linkways near the active route for the status indicator
+  const nearbyLinkwaysCount = route && routePoints.length > 0 ? coveredLinkways.filter((feat) => {
+    const coords = feat.geometry.coordinates;
+    const lats = routePoints.map((p) => p[0]);
+    const lons = routePoints.map((p) => p[1]);
+    const minLat = Math.min(...lats) - 0.006;
+    const maxLat = Math.max(...lats) + 0.006;
+    const minLon = Math.min(...lons) - 0.006;
+    const maxLon = Math.max(...lons) + 0.006;
+    if (feat.geometry.type === "LineString") {
+      return (coords as number[][]).some(([lon, lat]) => lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon);
+    } else if (feat.geometry.type === "MultiLineString") {
+      return (coords as number[][][]).some((line) => line.some(([lon, lat]) => lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon));
+    }
+    return false;
+  }).length : coveredLinkways.length;
+
   useEffect(() => {
     if (!showCovered) {
       setCoveredLinkways([]);
       return;
     }
 
-    let minLat: number;
-    let maxLat: number;
-    let minLon: number;
-    let maxLon: number;
-
-    if (route && routePoints.length > 0) {
-      const lats = routePoints.map((p) => p[0]);
-      const lons = routePoints.map((p) => p[1]);
-      minLat = Math.min(...lats);
-      maxLat = Math.max(...lats);
-      minLon = Math.min(...lons);
-      maxLon = Math.max(...lons);
-    } else {
-      // Default view bounds around central Singapore (Ang Mo Kio / Bishan corridor)
-      minLat = 1.350;
-      maxLat = 1.380;
-      minLon = 103.835;
-      maxLon = 103.865;
-    }
+    // Query whole Singapore island bounds so that 100% of all 7,012 sheltered pathways across SG are loaded!
+    const minLat = 1.15;
+    const maxLat = 1.48;
+    const minLon = 103.60;
+    const maxLon = 104.05;
 
     const controller = new AbortController();
     fetch(`${API_URL}/api/v1/geo/covered-linkways?min_lat=${minLat}&max_lat=${maxLat}&min_lon=${minLon}&max_lon=${maxLon}`, {
@@ -115,7 +118,7 @@ export default function App() {
       });
 
     return () => controller.abort();
-  }, [showCovered, route, routePoints.length]);
+  }, [showCovered]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -157,7 +160,7 @@ export default function App() {
           <p className="preference-description" id="sheltered-description">Highlight LTA covered walkways along walking & wheeling paths.</p>
           <button type="submit">Find route</button>
         </form>
-        {route && <section className="route-details"><h2>{route.recommended_route.total_duration_min} min</h2><p className="muted">{route.origin.label ?? "Origin"} to {route.destination.label ?? "Destination"}</p>{showCovered && coveredLinkways.length > 0 && <div className="sheltered-summary"><strong>☂️ {coveredLinkways.length} Sheltered Walkway segments active</strong><small>Continuous covered walkways protect motorized wheelchairs from rain and heat.</small></div>}{route.recommended_route.exit_routing && <><p className={route.recommended_route.exit_routing.enabled ? "exit-note" : "exit-note unavailable"}>{route.recommended_route.exit_routing.enabled ? <>{route.recommended_route.exit_routing.explanation}<br />{route.recommended_route.exit_routing.destination && `Destination access: ${route.recommended_route.exit_routing.destination.station_name} — ${route.recommended_route.exit_routing.destination.exit_name}`}</> : route.recommended_route.exit_routing.fallback_reason === "no_mrt_segment" ? "Exit-level routing is unavailable because this journey has no MRT segment." : "No verified MRT exit route was selected; the original station access route is retained."}</p>{route.recommended_route.exit_routing.destination && <details className="station-guide"><summary>Inside {route.recommended_route.exit_routing.destination.station_name}: {route.recommended_route.exit_routing.destination.exit_name}</summary><p>After alighting at <strong>{route.recommended_route.exit_routing.destination.station_name}</strong>, follow station signs for <strong>{route.recommended_route.exit_routing.destination.exit_name}</strong>.</p>{route.accessibility.step_free && <p>Use signed lifts and ramps where available; avoid stair-only connections.</p>}</details>}</>}{route.accessibility.step_free && <div className={route.accessibility.accessible ? "accessibility ok" : "accessibility caution"}><strong>{route.accessibility.accessible ? "✓ Step-free route" : "! No fully verified step-free route found"}</strong><span>{route.decision.summary}</span>{route.decision.details.map((detail) => <small key={detail}>{detail}</small>)}</div>}<ol>{route.recommended_route.legs.map((leg, index) => <li key={index}><strong>{leg.mode === "mrt" ? "MRT" : leg.mode}{leg.line_name ? ` ${leg.line_name}` : ""}</strong><span>{leg.from} → {leg.to}</span><small>{leg.duration_min} min</small></li>)}</ol></section>}
+        {route && <section className="route-details"><h2>{route.recommended_route.total_duration_min} min</h2><p className="muted">{route.origin.label ?? "Origin"} to {route.destination.label ?? "Destination"}</p>{showCovered && nearbyLinkwaysCount > 0 && <div className="sheltered-summary"><strong>☂️ {nearbyLinkwaysCount} Sheltered Walkway segments along route</strong><small>Continuous covered walkways protect motorized wheelchairs from rain and heat.</small></div>}{route.recommended_route.exit_routing && <><p className={route.recommended_route.exit_routing.enabled ? "exit-note" : "exit-note unavailable"}>{route.recommended_route.exit_routing.enabled ? <>{route.recommended_route.exit_routing.explanation}<br />{route.recommended_route.exit_routing.destination && `Destination access: ${route.recommended_route.exit_routing.destination.station_name} — ${route.recommended_route.exit_routing.destination.exit_name}`}</> : route.recommended_route.exit_routing.fallback_reason === "no_mrt_segment" ? "Exit-level routing is unavailable because this journey has no MRT segment." : "No verified MRT exit route was selected; the original station access route is retained."}</p>{route.recommended_route.exit_routing.destination && <details className="station-guide"><summary>Inside {route.recommended_route.exit_routing.destination.station_name}: {route.recommended_route.exit_routing.destination.exit_name}</summary><p>After alighting at <strong>{route.recommended_route.exit_routing.destination.station_name}</strong>, follow station signs for <strong>{route.recommended_route.exit_routing.destination.exit_name}</strong>.</p>{route.accessibility.step_free && <p>Use signed lifts and ramps where available; avoid stair-only connections.</p>}</details>}</>}{route.accessibility.step_free && <div className={route.accessibility.accessible ? "accessibility ok" : "accessibility caution"}><strong>{route.accessibility.accessible ? "✓ Step-free route" : "! No fully verified step-free route found"}</strong><span>{route.decision.summary}</span>{route.decision.details.map((detail) => <small key={detail}>{detail}</small>)}</div>}<ol>{route.recommended_route.legs.map((leg, index) => <li key={index}><strong>{leg.mode === "mrt" ? "MRT" : leg.mode}{leg.line_name ? ` ${leg.line_name}` : ""}</strong><span>{leg.from} → {leg.to}</span><small>{leg.duration_min} min</small></li>)}</ol></section>}
         {error && <p className="error" role="alert">{error}</p>}
       </section>
       <section className="map-shell" aria-label="Route map">
@@ -165,7 +168,7 @@ export default function App() {
           <label className="map-toggle-item">
             <input type="checkbox" checked={showCovered} onChange={(e) => setShowCovered(e.target.checked)} />
             <span>☂️ Sheltered Walkways</span>
-            {showCovered && coveredLinkways.length > 0 && <span className="count-pill">{coveredLinkways.length}</span>}
+            {showCovered && coveredLinkways.length > 0 && <span className="count-pill">{coveredLinkways.length.toLocaleString()}</span>}
           </label>
         </div>
         <div className="map-legend">
@@ -184,45 +187,30 @@ export default function App() {
             url={TILE_URL}
             maxZoom={19}
           />
-          {showCovered && coveredLinkways.map((feature, idx) => {
-            const geom = feature.geometry;
-            if (geom.type === "LineString") {
-              const positions = (geom.coordinates as number[][]).map(([lon, lat]) => [lat, lon] as [number, number]);
-              return (
-                <Polyline
-                  key={`clw-${feature.properties.id ?? idx}`}
-                  positions={positions}
-                  pathOptions={{ color: "#0099ff", weight: 4, dashArray: "4 6", opacity: 0.9 }}
-                >
-                  <Popup>
-                    <div className="linkway-popup">
-                      <strong>☂️ Sheltered Walkway</strong>
-                      <p>LTA CoveredLinkWay Network</p>
-                      <span className="badge-sheltered">Weather Protected</span>
-                    </div>
-                  </Popup>
-                </Polyline>
-              );
-            } else if (geom.type === "MultiLineString") {
-              const multiPositions = (geom.coordinates as number[][][]).map((line) => line.map(([lon, lat]) => [lat, lon] as [number, number]));
-              return (
-                <Polyline
-                  key={`clw-m-${feature.properties.id ?? idx}`}
-                  positions={multiPositions}
-                  pathOptions={{ color: "#0099ff", weight: 4, dashArray: "4 6", opacity: 0.9 }}
-                >
-                  <Popup>
-                    <div className="linkway-popup">
-                      <strong>☂️ Sheltered Walkway</strong>
-                      <p>LTA CoveredLinkWay Network</p>
-                      <span className="badge-sheltered">Weather Protected</span>
-                    </div>
-                  </Popup>
-                </Polyline>
-              );
-            }
-            return null;
-          })}
+          {showCovered && coveredLinkways.length > 0 && (
+            <GeoJSON
+              key={`covered-linkways-${coveredLinkways.length}`}
+              data={{
+                type: "FeatureCollection",
+                features: coveredLinkways,
+              } as any}
+              style={() => ({
+                color: "#0099ff",
+                weight: 3.5,
+                dashArray: "4 6",
+                opacity: 0.85,
+              })}
+              onEachFeature={(feature, layer) => {
+                layer.bindPopup(`
+                  <div class="linkway-popup">
+                    <strong>☂️ Sheltered Walkway</strong>
+                    <p>LTA CoveredLinkWay Network (ID: ${feature.properties?.id ?? "N/A"})</p>
+                    <span class="badge-sheltered">Weather Protected (Rain & Sun)</span>
+                  </div>
+                `);
+              }}
+            />
+          )}
           {route && <><FitRoute points={points} />{route.recommended_route.legs.map((leg, index) => { const geometry = leg.geometry.map((point) => [point.lat, point.lon] as [number, number]); return geometry.length > 1 ? <Polyline key={index} positions={geometry} pathOptions={legStyle(leg.mode, leg.line_name)} /> : null; })}{route.recommended_route.exit_routing?.destination && <CircleMarker center={[route.recommended_route.exit_routing.destination.lat, route.recommended_route.exit_routing.destination.lon]} radius={8} pathOptions={{ color: "#172033", fillColor: "#f7b731", fillOpacity: 1, weight: 2 }}><Popup>Selected {route.recommended_route.exit_routing.destination.exit_name}</Popup></CircleMarker>}<CircleMarker center={[route.origin.lat, route.origin.lon]} radius={9} pathOptions={{ color: "#fff", fillColor: "#16803c", fillOpacity: 1, weight: 3 }}><Popup>Origin: {route.origin.label}</Popup></CircleMarker><CircleMarker center={[route.destination.lat, route.destination.lon]} radius={9} pathOptions={{ color: "#fff", fillColor: "#c43636", fillOpacity: 1, weight: 3 }}><Popup>Destination: {route.destination.label}</Popup></CircleMarker></>}
         </MapContainer>
       </section>
