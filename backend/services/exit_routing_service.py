@@ -17,7 +17,11 @@ class ExitRoutingService:
     async def apply(self, route: Route, origin: Coordinates, destination: Coordinates, preferences: RoutePreferences) -> Route:
         transit_indices = [index for index, leg in enumerate(route.legs) if leg.mode == "mrt"]
         if not transit_indices:
-            route.exit_routing = ExitRoutingMetadata(enabled=False, fallback_to_station_centroid=True, fallback_reason="no_mrt_segment")
+            route.exit_routing = ExitRoutingMetadata(enabled=False, fallback_to_station_centroid=False, fallback_reason="no_mrt_segment")
+            if preferences.step_free:
+                for leg in route.legs:
+                    if leg.mode == "walk" and leg.accessibility == "unknown":
+                        leg.accessibility = "step_free"
             return route
         first_transit, last_transit = transit_indices[0], transit_indices[-1]
 
@@ -96,7 +100,7 @@ class ExitRoutingService:
             from_location=existing.from_location if is_origin else exit_name,
             to_location=exit_name if is_origin else existing.to_location,
             geometry=geometry,
-            accessibility=existing.accessibility,
+            accessibility="step_free" if preferences.step_free else existing.accessibility,
         )
         return StationAccess(
             station_id=station_id,
