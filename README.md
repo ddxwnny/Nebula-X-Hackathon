@@ -43,3 +43,11 @@ station-level fallback instead of claiming an exit-specific route.
 ```
 
 Open the URL shown in the terminal (normally `http://localhost:5173`). The frontend calls `http://localhost:8000` by default.
+
+## Live Disruption-Aware Re-Routing
+
+Active journeys can monitor LTA train service alerts (`TrainServiceAlerts`), detect disruptions affecting their remaining transit segments, and recalculate alternative routes from the commuter's current position:
+
+* `POST /api/v1/journeys`: Convert a planned route into an active journey with initial remaining legs and current position.
+* `GET /api/v1/journeys/{journey_id}/status`: Check if the active journey is affected by disruptions (`active`, `unaffected`, `reroute_required`, `rerouted`, `completed`).
+* `POST /api/v1/journeys/{journey_id}/reroute`: Recalculate the remaining journey from `current_position`, incorporating LTA shuttle/bus mitigations and returning a duration comparison against the original route.
