@@ -9,21 +9,23 @@ from uuid import uuid4
 
 from clients.lta_datamall_client import LtaDataMallClient
 from models.requests import RoutePreferences
-from models.responses import AccessibilityResult, Coordinates, RainForecast, Route, RouteResponse, VerificationStep
+from models.responses import AccessibilityResult, Coordinates, CrowdAssessment, RainForecast, Route, RouteResponse, VerificationStep
 from services.accessibility_service import AccessibilityService
 from services.exit_routing_service import ExitRoutingService
 from services.live_transit_service import LiveTransitService
 from services.routing_service import RoutingService
 from services.weather_service import WeatherService
+from services.crowd_service import CrowdService
 
 
 class RoutePipeline:
-    def __init__(self, routing_service: RoutingService, accessibility_service: AccessibilityService, exit_routing_service: ExitRoutingService, weather_service: WeatherService, live_transit_service: LiveTransitService):
+    def __init__(self, routing_service: RoutingService, accessibility_service: AccessibilityService, exit_routing_service: ExitRoutingService, weather_service: WeatherService, live_transit_service: LiveTransitService, crowd_service: CrowdService | None = None):
         self.routing_service = routing_service
         self.accessibility_service = accessibility_service
         self.exit_routing_service = exit_routing_service
         self.weather_service = weather_service
         self.live_transit_service = live_transit_service
+        self.crowd_service = crowd_service or CrowdService()
 
     async def run(self, origin: Coordinates, destination: Coordinates, departure_date: date | None, departure_time: time | None, preferences: RoutePreferences) -> RouteResponse:
         if preferences.simulate_lift_maintenance:
@@ -85,6 +87,11 @@ class RoutePipeline:
             recommendation=rain_assessment["recommendation"],
         )
         steps.append(VerificationStep(stage="rain_forecast", status="done", detail=f"rain severity: {rain_forecast.rain_severity}"))
+        crowd_assessment = await self.crowd_service.assess(route, enabled=preferences.crowd_control)
+        if crowd_assessment.status != "unavailable":
+            steps.append(VerificationStep(stage="crowd_control", status="warning" if crowd_assessment.overall_level == "high" else "done", detail=crowd_assessment.recommendation))
+            if preferences.crowd_control and crowd_assessment.tradeoff:
+                decision.details.append(crowd_assessment.tradeoff)
 
         return RouteResponse(
             request_id=str(uuid4()),
@@ -94,6 +101,7 @@ class RoutePipeline:
             accessibility=accessibility,
             decision=decision,
             rain_forecast=rain_forecast,
+            crowd_assessment=crowd_assessment,
             verification=steps,
         )
 

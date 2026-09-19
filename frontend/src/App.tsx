@@ -41,6 +41,13 @@ type LiveBusInfo = {
 
 type VerificationStep = { stage: string; status: "done" | "warning" | "skipped" | "unavailable" | string; detail: string };
 
+type CrowdStation = {
+  line: string;
+  station: string;
+  live_level: "low" | "medium" | "high" | "unknown" | string;
+  forecast_level: "low" | "medium" | "high" | "unknown" | string;
+};
+
 type RouteResponse = {
   origin: { lat: number; lon: number; label?: string };
   destination: { lat: number; lon: number; label?: string };
@@ -81,6 +88,13 @@ type RouteResponse = {
     station_exits_considered: string[];
   };
   decision: { reason: string; summary: string; details: string[] };
+  crowd_assessment?: {
+    status: "live" | "partial" | "unavailable" | string;
+    overall_level: "low" | "medium" | "high" | "unknown" | string;
+    stations: CrowdStation[];
+    recommendation: string;
+    tradeoff?: string | null;
+  } | null;
   reroute?: { reason?: string | null; origin_source: string; replanned_at: string; exits_checked: number } | null;
   verification?: VerificationStep[];
   rain_forecast?: {
@@ -305,6 +319,7 @@ export default function App() {
   const [simulatedStation, setSimulatedStation] = useState("NOVENA");
   const [dryRouteMode, setDryRouteMode] = useState(false);
   const [simulateRain, setSimulateRain] = useState(false);
+  const [crowdControl, setCrowdControl] = useState(true);
 
   const [coveredLinkways, setCoveredLinkways] = useState<CoveredLinkwayFeature[]>([]);
   const [stationGroundPolygons, setStationGroundPolygons] = useState<StationGroundFeature[]>([]);
@@ -396,6 +411,7 @@ export default function App() {
         simulateLiftMaintenance: simulateOutage ? simulatedStation : null,
         dryRoute: dryRouteMode,
         simulateRain,
+        crowdControl,
       },
     };
   }
@@ -527,6 +543,14 @@ export default function App() {
             When rain is forecasted, prefer continuous covered paths: concourse → underpass → covered linkway → canopy.
           </p>
 
+          <label className="preference-toggle crowd-control-toggle">
+            <input type="checkbox" checked={crowdControl} onChange={(event) => setCrowdControl(event.target.checked)} aria-describedby="crowd-control-description" />
+            <span>👥 Crowd Control</span>
+          </label>
+          <p className="preference-description" id="crowd-control-description">
+            Check live and forecast MRT crowding, then show the time trade-off for a calmer boarding window.
+          </p>
+
           <div className="simulator-box">
             <label className="preference-toggle danger-toggle">
               <input type="checkbox" checked={simulateOutage} onChange={(e) => setSimulateOutage(e.target.checked)} />
@@ -586,6 +610,29 @@ export default function App() {
             )}
             {route.recommended_route.estimated_arrival?.basis === "uncertain" && (
               <p className="arrival-caution">{route.recommended_route.estimated_arrival.note}</p>
+            )}
+            {route.crowd_assessment && (
+              <div className={`crowd-card crowd-${route.crowd_assessment.overall_level}`}>
+                <div className="crowd-card-header">
+                  <strong>👥 Crowd Control</strong>
+                  <span className="crowd-level-badge">{route.crowd_assessment.overall_level.toUpperCase()}</span>
+                </div>
+                <p>{route.crowd_assessment.recommendation}</p>
+                {route.crowd_assessment.tradeoff && <small>{route.crowd_assessment.tradeoff}</small>}
+                {route.crowd_assessment.stations.length > 0 && (
+                  <div className="crowd-stations">
+                    {route.crowd_assessment.stations.slice(0, 4).map((station) => (
+                      <div className="crowd-station" key={`${station.line}-${station.station}`}>
+                        <span>{station.line} · {station.station}</span>
+                        <span className="crowd-level-pair">
+                          <b className={`crowd-dot ${station.live_level}`}>Live {station.live_level}</b>
+                          <b className={`crowd-dot ${station.forecast_level}`}>Forecast {station.forecast_level}</b>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             <button type="button" className="reroute-button" onClick={handleReroute} disabled={rerouting || planning || !plannedRequest}>
               {rerouting ? "Rerouting…" : "↻ Reroute from my location"}

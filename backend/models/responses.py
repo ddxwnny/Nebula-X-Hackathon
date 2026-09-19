@@ -87,6 +87,21 @@ class VerificationStep(BaseModel):
     detail: str
 
 
+class CrowdStation(BaseModel):
+    line: str
+    station: str
+    live_level: str = "unknown"
+    forecast_level: str = "unknown"
+
+
+class CrowdAssessment(BaseModel):
+    status: str  # live, partial, unavailable
+    overall_level: str  # low, medium, high, unknown
+    stations: list[CrowdStation] = Field(default_factory=list)
+    recommendation: str
+    tradeoff: str | None = None
+
+
 class RerouteInfo(BaseModel):
     reason: str | None = None
     origin_source: str  # current_location or original_origin
@@ -102,6 +117,7 @@ class RouteResponse(BaseModel):
     accessibility: "AccessibilityResult"
     decision: "RouteDecision"
     rain_forecast: "RainForecast | None" = None
+    crowd_assessment: CrowdAssessment | None = None
     reroute: RerouteInfo | None = None
     verification: list[VerificationStep] = Field(default_factory=list)
 

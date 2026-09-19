@@ -25,6 +25,8 @@ ol.legs-list li.leg-barrier { border-left: 4px solid #ef4444; background: #fef2f
 .preference-toggle { display: flex; align-items: center; gap: 9px; font-weight: 600; cursor: pointer; color: #1e293b; font-size: 0.88rem; }
 .preference-toggle input { width: 18px; height: 18px; accent-color: #4f46e5; cursor: pointer; }
 .preference-description { margin: -5px 0 2px 27px; color: #64748b; font-size: .8rem; }
+.crowd-control-toggle { color: #0f766e; }
+.crowd-control-toggle input { accent-color: #0f766e; }
 
 .simulator-box { margin: 6px 0; padding: 10px 12px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; display: grid; gap: 8px; }
 .danger-toggle { color: #9f1239; font-weight: 700; }
@@ -182,6 +184,24 @@ ol.legs-list li.leg-barrier { border-left: 4px solid #ef4444; background: #fef2f
 .live-bus.no_suitable_bus { color: #b45309; font-weight: 600; }
 .arrival-estimate.uncertain .arrival-basis { color: #b45309; }
 .arrival-caution { margin: -4px 0 10px; padding: 8px 10px; border-radius: 6px; background: #fff7e6; color: #8a4b00; font-size: 0.8rem; }
+.crowd-card { display: grid; gap: 7px; margin: 12px 0; padding: 12px 14px; border: 1px solid #cbd5e1; border-left: 4px solid #64748b; border-radius: 8px; background: #f8fafc; }
+.crowd-card.crowd-low { border-left-color: #059669; background: #f0fdf4; }
+.crowd-card.crowd-medium { border-left-color: #d97706; background: #fffbeb; }
+.crowd-card.crowd-high { border-left-color: #dc2626; background: #fef2f2; }
+.crowd-card-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.crowd-card p, .crowd-card small { margin: 0; color: #475569; font-size: .8rem; line-height: 1.35; }
+.crowd-level-badge { padding: 3px 7px; border-radius: 5px; background: #e2e8f0; color: #334155; font-size: .68rem; font-weight: 800; }
+.crowd-high .crowd-level-badge { background: #fee2e2; color: #b91c1c; }
+.crowd-medium .crowd-level-badge { background: #fef3c7; color: #92400e; }
+.crowd-low .crowd-level-badge { background: #d1fae5; color: #047857; }
+.crowd-stations { display: grid; gap: 4px; margin-top: 2px; }
+.crowd-station { display: flex; justify-content: space-between; gap: 8px; color: #334155; font-size: .73rem; }
+.crowd-level-pair { display: flex; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
+.crowd-dot { font-size: .68rem; font-weight: 700; }
+.crowd-dot.low { color: #047857; }
+.crowd-dot.medium { color: #b45309; }
+.crowd-dot.high { color: #b91c1c; }
+.crowd-dot.unknown { color: #64748b; }
 .reroute-banner.warning { background: #fff7e6; border-left-color: #d97706; color: #8a4b00; }
 .verification-list { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 0.78rem; }
 .verification-list li { display: block; padding: 0; border: 0; text-transform: none; }

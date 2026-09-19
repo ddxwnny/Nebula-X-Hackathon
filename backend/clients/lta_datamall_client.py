@@ -57,6 +57,9 @@ class LtaDataMallClient:
     BUS_ARRIVAL_TTL = timedelta(seconds=20)
     BUS_ARRIVAL_FAILURE_TTL = timedelta(seconds=10)
     BUS_ARRIVAL_CACHE_MAX = 500
+    _train_crowd_cache: dict[str, tuple[datetime, list[dict] | None]] = {}
+    TRAIN_CROWD_TTL = timedelta(seconds=60)
+    TRAIN_CROWD_FAILURE_TTL = timedelta(seconds=15)
     EXIT_RETRY_WITH_CACHE = timedelta(minutes=5)
     EXIT_RETRY_EMPTY = timedelta(minutes=1)
 
@@ -94,6 +97,32 @@ class LtaDataMallClient:
             while len(cache) >= cls.BUS_ARRIVAL_CACHE_MAX:
                 del cache[next(iter(cache))]
         cache[stop_code] = (until, services)
+
+    async def train_crowd(self, train_line: str, *, forecast: bool = False) -> list[dict] | None:
+        """Fetch LTA station crowd levels for a train line, with a short cache."""
+        train_line = str(train_line or "").strip().upper()
+        settings = get_settings()
+        if not train_line or not settings.lta_datamall_account_key:
+            return None
+        endpoint = "PCDForecast" if forecast else "PCDRealTime"
+        cache_key = f"{endpoint}:{train_line}"
+        now = datetime.now(timezone.utc)
+        cached = self._train_crowd_cache.get(cache_key)
+        if cached and now < cached[0]:
+            return cached[1]
+        headers = {"AccountKey": settings.lta_datamall_account_key, "accept": "application/json"}
+        rows: list[dict] | None
+        try:
+            async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
+                response = await client.get(f"{self.BASE_URL}/{endpoint}", params={"TrainLine": train_line}, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+            raw_rows = payload.get("value", payload.get("Value", [])) if isinstance(payload, dict) else payload
+            rows = [row for row in raw_rows if isinstance(row, dict)] if isinstance(raw_rows, list) else None
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            rows = None
+        self._train_crowd_cache[cache_key] = (now + (self.TRAIN_CROWD_TTL if rows is not None else self.TRAIN_CROWD_FAILURE_TTL), rows)
+        return rows
 
     async def all_lift_maintenance(self) -> list[dict]:
         """Fetch all active lift/facility maintenance events across the entire rail network."""
