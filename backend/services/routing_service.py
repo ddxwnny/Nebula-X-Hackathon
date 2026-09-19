@@ -5,6 +5,7 @@ from clients.onemap_client import OneMapClient
 from clients.routing_client import RoutingClient
 from config import get_settings
 from models.responses import Coordinates, Route, RouteLeg
+from utils.duration import duration_to_range
 
 
 class RoutingService:
@@ -29,7 +30,14 @@ class RoutingService:
         legs = [self._to_leg(leg) for leg in itinerary["legs"]]
         if not legs:
             raise HTTPException(status_code=404, detail="No route found for these locations")
-        return Route(total_duration_min=round(float(itinerary["duration"]) / 60, 1), distance_m=round(sum(leg.distance_m for leg in legs), 1), legs=legs)
+        raw_duration = round(float(itinerary["duration"]) / 60, 1)
+        return Route(
+            raw_duration_minutes=raw_duration,
+            total_duration_min=raw_duration,
+            duration_minutes=duration_to_range(raw_duration),
+            distance_m=round(sum(leg.distance_m for leg in legs), 1),
+            legs=legs,
+        )
 
     @staticmethod
     def _select_best_itinerary(

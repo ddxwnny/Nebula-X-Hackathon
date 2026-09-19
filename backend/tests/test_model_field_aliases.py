@@ -101,6 +101,47 @@ class TestModelFieldAliases(unittest.TestCase):
         self.assertEqual(str(req.departure_date), "2026-09-19")
         self.assertEqual(str(req.departure_time), "14:00:00")
 
+    def test_route_duration_range_aliases(self):
+        from models.responses import Route
+
+        # Validate with total_duration_min float
+        r1 = Route.model_validate({
+            "total_duration_min": 52.4,
+            "distance_m": 5000.0,
+            "legs": [],
+        })
+        self.assertEqual(r1.duration_minutes.min, 50)
+        self.assertEqual(r1.duration_minutes.max, 55)
+        self.assertEqual(r1.total_duration_min, 52.4)
+
+        # Validate with camelCase totalDurationMin
+        r2 = Route.model_validate({
+            "totalDurationMin": 30.0,
+            "distance_m": 5000.0,
+            "legs": [],
+        })
+        self.assertEqual(r2.duration_minutes.min, 30)
+        self.assertEqual(r2.duration_minutes.max, 35)
+
+        # Validate with duration_minutes object
+        r3 = Route.model_validate({
+            "duration_minutes": {"min": 50, "max": 55},
+            "distance_m": 5000.0,
+            "legs": [],
+        })
+        self.assertEqual(r3.duration_minutes.min, 50)
+        self.assertEqual(r3.duration_minutes.max, 55)
+
+        # Validate with camelCase durationMinutes object
+        r4 = Route.model_validate({
+            "durationMinutes": {"min": 50, "max": 55},
+            "distance_m": 5000.0,
+            "legs": [],
+        })
+        self.assertEqual(r4.duration_minutes.min, 50)
+        self.assertEqual(r4.duration_minutes.max, 55)
+
+
 
 if __name__ == "__main__":
     unittest.main()
