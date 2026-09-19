@@ -235,8 +235,6 @@ class JourneyService:
         destination: Coordinates,
         disruption: TrainDisruption | None,
     ) -> Route:
-        # Fetch candidate public transit routes from router
-        route = await router.get_route(start, destination)
         avoid_lines = [disruption.line] if disruption and disruption.line else None
         avoid_stations = disruption.stations if disruption and disruption.stations else None
 

@@ -10,7 +10,6 @@ from models.responses import Coordinates, Route, RouteLeg
 class RoutingService:
     def __init__(self, client: RoutingClient | None = None): self.client = client or RoutingClient(OneMapClient(get_settings()))
 
-    async def get_route(self, origin: Coordinates, destination: Coordinates, departure_date: date | None = None, departure_time: time | None = None) -> Route:
     async def get_route(
         self,
         origin: Coordinates,
@@ -21,14 +20,6 @@ class RoutingService:
         avoid_stations: list[str] | None = None,
     ) -> Route:
         payload = await self.client.get_public_transit_route(origin, destination, departure_date, departure_time)
-        try: itineraries = payload["plan"]["itineraries"]
-        except (KeyError, IndexError, TypeError) as error: raise HTTPException(status_code=404, detail="No public-transit route found") from error
-        # Prefer a multimodal journey, but preserve a genuine walking-only
-        # result when OneMap does not offer public transit for the locations.
-        itinerary = next(
-            (item for item in itineraries if any(str(leg.get("mode", "")).upper() != "WALK" for leg in item.get("legs", []))),
-            itineraries[0],
-        )
         try:
             itineraries = payload["plan"]["itineraries"]
         except (KeyError, IndexError, TypeError) as error:

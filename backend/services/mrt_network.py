@@ -1,9 +1,7 @@
-"""Canonical Singapore MRT network mapping and station code utilities."""
 """Canonical Singapore MRT network mapping, graph topology, and station code utilities."""
 
 import re
 
-# Canonical line sequences
 # Canonical line station lists (for reference and validation)
 LINE_STATION_SEQUENCES: dict[str, list[str]] = {
     "CCL": [
@@ -21,7 +19,6 @@ LINE_STATION_SEQUENCES: dict[str, list[str]] = {
         "EW1", "EW2", "EW3", "EW4", "EW5", "EW6", "EW7", "EW8", "EW9", "EW10",
         "EW11", "EW12", "EW13", "EW14", "EW15", "EW16", "EW17", "EW18", "EW19",
         "EW20", "EW21", "EW22", "EW23", "EW24", "EW25", "EW26", "EW27", "EW28",
-        "EW29", "EW30", "EW31", "EW32", "CG1", "CG2",
         "EW29", "EW30", "EW31", "EW32", "EW33", "CG1", "CG2",
     ],
     "NEL": [
@@ -222,9 +219,6 @@ STATION_NAME_TO_CODES: dict[str, list[str]] = {
     "NOVENA": ["NS20"],
     "NEWTON": ["NS21", "DT11"],
     "ORCHARD": ["NS22", "TE14"],
-    "CITY HALL": ["NS25", "EW13"],
-    "RAFFLES PLACE": ["NS26", "EW14"],
-    "OUTRAM PARK": ["EW16", "NE3", "TE17"],
     "SOMERSET": ["NS23"],
     "MARINA SOUTH PIER": ["NS28"],
 
@@ -241,13 +235,6 @@ STATION_NAME_TO_CODES: dict[str, list[str]] = {
     "BUANGKOK": ["NE15"],
     "SENGKANG": ["NE16"],
     "PUNGGOL": ["NE17"],
-    "BUGIS": ["EW12", "DT14"],
-    "TANAH MERAH": ["EW3"],
-    "PASIR RIS": ["EW1"],
-    "EXPO": ["CG1", "DT35"],
-    "CHANGI AIRPORT": ["CG2"],
-    "NEWTON": ["NS21", "DT11"],
-    "SOMERSET": ["NS23"],
 }
 
 
@@ -273,7 +260,6 @@ def extract_station_code(text: str) -> str | None:
 
 
 def station_code_for_name(station_name: str, line: str | None = None) -> str | None:
-    # First check if the text itself is already a station code
     extracted = extract_station_code(station_name)
     if extracted:
         return extracted
@@ -323,29 +309,15 @@ def _bfs_shortest_path(adj: dict[str, list[str]], start: str, end: str) -> list[
 def get_stations_traversed(line: str | None, from_station: str, to_station: str) -> list[str]:
     """Return all station codes along the line between from_station and to_station (inclusive)."""
     canon_line = normalize_line_name(line)
-    if not canon_line or canon_line not in LINE_STATION_SEQUENCES:
-        from_code = extract_station_code(from_station)
-        to_code = extract_station_code(to_station)
-        return [c for c in [from_code, to_code] if c]
-
-    seq = LINE_STATION_SEQUENCES[canon_line]
     from_code = station_code_for_name(from_station, canon_line)
     to_code = station_code_for_name(to_station, canon_line)
 
     if not from_code or not to_code:
         return [c for c in [from_code, to_code] if c]
 
-    try:
-        idx_from = seq.index(from_code)
-        idx_to = seq.index(to_code)
-    except ValueError:
-        return [c for c in [from_code, to_code] if c]
     if canon_line in LINE_GRAPHS:
         return _bfs_shortest_path(LINE_GRAPHS[canon_line], from_code, to_code)
 
-    if idx_from <= idx_to:
-        return seq[idx_from : idx_to + 1]
-    return seq[idx_to : idx_from + 1][::-1]
     return [from_code, to_code]
 
 
@@ -354,4 +326,3 @@ def check_station_overlap(journey_stations: list[str], disrupted_stations: list[
     j_set = {s.strip().upper() for s in journey_stations if s.strip()}
     d_set = {s.strip().upper() for s in disrupted_stations if s.strip()}
     return sorted(j_set.intersection(d_set))
-

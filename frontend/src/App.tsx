@@ -23,6 +23,14 @@ type RouteResponse = {
       fallback_to_station_centroid: boolean;
       explanation?: string;
       fallback_reason?: string;
+      origin?: {
+        station_id: string;
+        station_name: string;
+        exit_id: string;
+        exit_name: string;
+        lat: number;
+        lon: number;
+      };
       destination?: {
         station_id: string;
         station_name: string;
@@ -303,8 +311,25 @@ export default function App() {
                   {route.recommended_route.exit_routing.enabled ? (
                     <>
                       {route.recommended_route.exit_routing.explanation}
-                      <br />
-                      {route.recommended_route.exit_routing.destination && `Destination access: ${route.recommended_route.exit_routing.destination.station_name} — ${route.recommended_route.exit_routing.destination.exit_name}`}
+                      {route.recommended_route.exit_routing.origin && (
+                        <div>
+                          <strong>Origin access:</strong> {route.recommended_route.exit_routing.origin.station_name} — {route.recommended_route.exit_routing.origin.exit_name}
+                        </div>
+                      )}
+                      {route.recommended_route.exit_routing.destination && (
+                        <div>
+                          <strong>Destination access:</strong> {route.recommended_route.exit_routing.destination.station_name} — {route.recommended_route.exit_routing.destination.exit_name}
+                        </div>
+                      )}
+                      {route.recommended_route.exit_routing.fallback_to_station_centroid && (
+                        <div style={{ fontSize: "0.8rem", color: "#4b5565", marginTop: 4 }}>
+                          {route.recommended_route.exit_routing.fallback_reason === "destination_exit_data_unavailable"
+                            ? "ℹ️ Destination exit data unavailable; retaining station centroid access."
+                            : route.recommended_route.exit_routing.fallback_reason === "origin_exit_data_unavailable"
+                            ? "ℹ️ Origin exit data unavailable; retaining station centroid access."
+                            : "ℹ️ Retaining standard station centroid access where exit data was unavailable."}
+                        </div>
+                      )}
                     </>
                   ) : route.recommended_route.exit_routing.fallback_reason === "no_mrt_segment" ? (
                     "Exit-level routing is unavailable because this journey has no MRT segment."
@@ -312,6 +337,13 @@ export default function App() {
                     "No verified MRT exit route was selected; the original station access route is retained."
                   )}
                 </p>
+                {route.recommended_route.exit_routing.origin && (
+                  <details className="station-guide">
+                    <summary>Entering {route.recommended_route.exit_routing.origin.station_name}: {route.recommended_route.exit_routing.origin.exit_name}</summary>
+                    <p>Enter via <strong>{route.recommended_route.exit_routing.origin.exit_name}</strong> to board the train at <strong>{route.recommended_route.exit_routing.origin.station_name}</strong>.</p>
+                    {route.accessibility.step_free && <p>Use signed lifts and ramps where available; avoid stair-only connections.</p>}
+                  </details>
+                )}
                 {route.recommended_route.exit_routing.destination && (
                   <details className="station-guide">
                     <summary>Inside {route.recommended_route.exit_routing.destination.station_name}: {route.recommended_route.exit_routing.destination.exit_name}</summary>
@@ -382,6 +414,11 @@ export default function App() {
                 const geometry = (leg.geometry ?? []).map((point) => [point.lat, point.lon] as [number, number]);
                 return geometry.length > 1 ? <Polyline key={index} positions={geometry} pathOptions={legStyle(leg.mode, leg.line_name)} /> : null;
               })}
+              {route.recommended_route.exit_routing?.origin && (
+                <CircleMarker center={[route.recommended_route.exit_routing.origin.lat, route.recommended_route.exit_routing.origin.lon]} radius={8} pathOptions={{ color: "#172033", fillColor: "#20c997", fillOpacity: 1, weight: 2 }}>
+                  <Popup>Origin entrance: {route.recommended_route.exit_routing.origin.exit_name}</Popup>
+                </CircleMarker>
+              )}
               {route.recommended_route.exit_routing?.destination && (
                 <CircleMarker center={[route.recommended_route.exit_routing.destination.lat, route.recommended_route.exit_routing.destination.lon]} radius={8} pathOptions={{ color: "#172033", fillColor: "#f7b731", fillOpacity: 1, weight: 2 }}>
                   <Popup>Selected {route.recommended_route.exit_routing.destination.exit_name}</Popup>

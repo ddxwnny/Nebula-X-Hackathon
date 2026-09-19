@@ -60,8 +60,6 @@ class TestJourneyReroute(unittest.IsolatedAsyncioTestCase):
 
         response = await journey_service.reroute_journey(journey.journey_id, routing_service=mock_router)
 
-        # 1. Router must be called with current_position, NOT original origin
-        mock_router.get_route.assert_called_once_with(current_pos, destination)
         # 1. Router must be called with current_position, NOT original origin, and avoid parameters
         mock_router.get_route.assert_called_once_with(
             origin=current_pos,
