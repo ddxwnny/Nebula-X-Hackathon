@@ -12,6 +12,10 @@ type RouteResponse = {
 type LocationSuggestion = { address: string };
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const CARTODB_API_KEY = import.meta.env.VITE_CARTODB_API_KEY;
+const TILE_URL = CARTODB_API_KEY
+  ? `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?api_key=${CARTODB_API_KEY}`
+  : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
 function useLocationSuggestions(query: string) {
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
@@ -105,7 +109,7 @@ export default function App() {
         <MapContainer center={points[0]} zoom={12} scrollWheelZoom>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>'
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+            url={TILE_URL}
             maxZoom={19}
           />
           {route && <><FitRoute points={points} />{route.recommended_route.legs.map((leg, index) => { const geometry = leg.geometry.map((point) => [point.lat, point.lon] as [number, number]); return geometry.length > 1 ? <Polyline key={index} positions={geometry} pathOptions={legStyle(leg.mode, leg.line_name)} /> : null; })}{route.recommended_route.exit_routing?.destination && <CircleMarker center={[route.recommended_route.exit_routing.destination.lat, route.recommended_route.exit_routing.destination.lon]} radius={8} pathOptions={{ color: "#172033", fillColor: "#f7b731", fillOpacity: 1, weight: 2 }}><Popup>Selected {route.recommended_route.exit_routing.destination.exit_name}</Popup></CircleMarker>}<CircleMarker center={[route.origin.lat, route.origin.lon]} radius={9} pathOptions={{ color: "#fff", fillColor: "#16803c", fillOpacity: 1, weight: 3 }}><Popup>Origin: {route.origin.label}</Popup></CircleMarker><CircleMarker center={[route.destination.lat, route.destination.lon]} radius={9} pathOptions={{ color: "#fff", fillColor: "#c43636", fillOpacity: 1, weight: 3 }}><Popup>Destination: {route.destination.label}</Popup></CircleMarker></>}
