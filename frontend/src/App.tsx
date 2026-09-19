@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useEffect, useState } from "react";
+import { FormEvent, Fragment, useEffect, useRef, useState } from "react";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -18,6 +18,29 @@ type ExitCandidate = {
   is_selected: boolean;
 };
 
+type BusEta = {
+  estimated_arrival: string;
+  minutes_away: number;
+  wheelchair_accessible: boolean;
+  load: string;
+  bus_type: string;
+  monitored: boolean;
+};
+
+type LiveBusInfo = {
+  status: "live" | "no_suitable_bus" | "beyond_live_horizon" | "outside_live_window" | "unavailable" | string;
+  stop_code: string;
+  service_no: string;
+  next_buses: BusEta[];
+  boarding_eta?: string | null;
+  boarding_bus_wheelchair_accessible?: boolean | null;
+  delay_vs_schedule_min?: number | null;
+  skipped_inaccessible?: number;
+  message: string;
+};
+
+type VerificationStep = { stage: string; status: "done" | "warning" | "skipped" | "unavailable" | string; detail: string };
+
 type RouteResponse = {
   origin: { lat: number; lon: number; label?: string };
   destination: { lat: number; lon: number; label?: string };
@@ -31,7 +54,11 @@ type RouteResponse = {
       geometry: Array<{ lat: number; lon: number }>;
       line_name?: string;
       accessibility?: string;
+      stop_code?: string | null;
+      service_no?: string | null;
+      live_bus?: LiveBusInfo | null;
     }>;
+    estimated_arrival?: { departure: string; arrival: string; basis: "live" | "scheduled" | string; note: string } | null;
     exit_routing?: {
       enabled: boolean;
       fallback_to_station_centroid: boolean;
@@ -54,6 +81,8 @@ type RouteResponse = {
     station_exits_considered: string[];
   };
   decision: { reason: string; summary: string; details: string[] };
+  reroute?: { reason?: string | null; origin_source: string; replanned_at: string; exits_checked: number } | null;
+  verification?: VerificationStep[];
   rain_forecast?: {
     rain_along_route: boolean;
     rain_severity: string;
@@ -115,18 +144,47 @@ const liftMaintenanceIcon = L.divIcon({
   iconAnchor: [14, 14],
 });
 
-// Station exit pin: exit code ("A", "2") with a lift badge — elevator, or struck-through when LTA reports an outage.
+// LTA publishes lift outages, not which exits have lifts, so an exit without
+// an outage is "unknown" rather than shown as having a working lift.
+type ExitLiftState = "outage" | "station-alert" | "unknown";
+
+function exitLiftState(exit: ExitCandidate): ExitLiftState {
+  if (exit.lift_status === "maintenance") return "outage";
+  return exit.station_lift_alerts.length > 0 ? "station-alert" : "unknown";
+}
+
+const EXIT_LIFT_TEXT: Record<ExitLiftState, string> = {
+  outage: "Lift out of service",
+  "station-alert": "Lift status unknown — other lift outages in this station",
+  unknown: "Lift status unknown — no outage reported",
+};
+
+const EXIT_LIFT_BADGE: Record<ExitLiftState, string> = { outage: "🛗", "station-alert": "!", unknown: "?" };
+
+function escapeHtml(text: string) {
+  return text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
+}
+
+// Icons are cached so re-renders (e.g. typing in the search boxes) don't make Leaflet rebuild every pin.
+const exitIconCache = new Map<string, L.DivIcon>();
+
+// Station exit pin: exit code ("A", "2") with a lift badge — struck-through 🛗 for an outage, "!" for other outages in the station, "?" otherwise.
 function exitIcon(exit: ExitCandidate) {
   const code = exit.exit_name.replace(/^exit\s+/i, "");
-  const outage = exit.lift_status === "maintenance";
-  const classes = ["exit-pin", exit.is_selected ? "selected" : "", outage ? "outage" : ""].join(" ");
-  return L.divIcon({
+  const state = exitLiftState(exit);
+  const cacheKey = `${code}|${state}|${exit.is_selected}`;
+  const cached = exitIconCache.get(cacheKey);
+  if (cached) return cached;
+  const classes = ["exit-pin", state, exit.is_selected ? "selected" : ""].join(" ");
+  const icon = L.divIcon({
     className: "exit-pin-icon",
-    html: `<div class="${classes}"><span class="exit-pin-code">${code}</span><span class="exit-pin-lift${outage ? " down" : ""}" aria-hidden="true">🛗</span></div>`,
+    html: `<div class="${classes}"><span class="exit-pin-code">${escapeHtml(code)}</span><span class="exit-pin-lift ${state}" aria-hidden="true">${EXIT_LIFT_BADGE[state]}</span></div>`,
     iconSize: [34, 34],
     iconAnchor: [17, 17],
     popupAnchor: [0, -16],
   });
+  exitIconCache.set(cacheKey, icon);
+  return icon;
 }
 
 function useLocationSuggestions(query: string) {
@@ -147,11 +205,60 @@ function useLocationSuggestions(query: string) {
   return suggestions;
 }
 
-function FitRoute({ points }: { points: [number, number][] }) {
+const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198];
+const FIT_PADDING: L.PointTuple = [48, 48];
+
+// Fit once per new route. `points` is rebuilt every render, so depending on it
+// would snap the view back whenever a layer is toggled after the rider zooms.
+function FitRoute({ route, points }: { route: RouteResponse; points: [number, number][] }) {
   const map = useMap();
-  useEffect(() => { map.fitBounds(points, { padding: [48, 48] }); }, [map, points]);
+  useEffect(() => { map.fitBounds(points, { padding: FIT_PADDING }); }, [map, route]); // eslint-disable-line react-hooks/exhaustive-deps
   return null;
 }
+
+// Times come back as ISO strings with a +08:00 offset; show them in Singapore time.
+function sgTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Singapore" });
+}
+
+function liveBusSummary(live: LiveBusInfo) {
+  if (live.status !== "live") return live.message;
+  const delay = live.delay_vs_schedule_min;
+  const parts = [live.message];
+  if (live.boarding_bus_wheelchair_accessible) parts.push("♿ Wheelchair accessible.");
+  if (live.skipped_inaccessible) parts.push(`Skips ${live.skipped_inaccessible} non-accessible bus${live.skipped_inaccessible > 1 ? "es" : ""}.`);
+  if (delay != null) parts.push(Math.abs(delay) < 1 ? "Bus on schedule." : delay > 0 ? `Bus running ${Math.round(delay)} min late.` : `Bus ${Math.round(-delay)} min early.`);
+  return parts.join(" ");
+}
+
+// Singapore-local date/time strings for the departure inputs (toISOString() is UTC and gives
+// yesterday's date before 08:00 SGT).
+function sgNow() {
+  const now = new Date();
+  return {
+    date: now.toLocaleDateString("en-CA", { timeZone: "Asia/Singapore" }),
+    time: now.toLocaleTimeString("en-GB", { timeZone: "Asia/Singapore", hour: "2-digit", minute: "2-digit" }),
+  };
+}
+
+// Browser geolocation for "reroute from here"; resolves null when unavailable or denied.
+function currentPosition(): Promise<{ lat: number; lon: number } | null> {
+  return new Promise((resolve) => {
+    if (!("geolocation" in navigator)) return resolve(null);
+    // Some browsers never call back when the permission prompt is dismissed; always settle.
+    const giveUp = window.setTimeout(() => resolve(null), 10000);
+    navigator.geolocation.getCurrentPosition(
+      (position) => { window.clearTimeout(giveUp); resolve({ lat: position.coords.latitude, lon: position.coords.longitude }); },
+      () => { window.clearTimeout(giveUp); resolve(null); },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 },
+    );
+  });
+}
+
+// Planning calls OneMap, LTA and data.gov.sg; give up rather than leave the buttons stuck.
+const ROUTE_REQUEST_TIMEOUT_MS = 45000;
+
+const isWideScreen = () => typeof window !== "undefined" && window.matchMedia("(min-width: 769px)").matches;
 
 function legStyle(mode: string, lineName?: string, accessibility?: string) {
   if (mode === "walk") {
@@ -185,8 +292,11 @@ function legStyle(mode: string, lineName?: string, accessibility?: string) {
 export default function App() {
   const [origin, setOrigin] = useState("Ang Mo Kio MRT Station");
   const [destination, setDestination] = useState("Singapore General Hospital");
-  const [departureDate, setDepartureDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [departureTime, setDepartureTime] = useState(() => new Date().toTimeString().slice(0, 5));
+  const [departureDate, setDepartureDate] = useState(() => sgNow().date);
+  const [departureTime, setDepartureTime] = useState(() => sgNow().time);
+  // Until the rider picks a time the journey leaves now: the backend then uses the current
+  // time, so live bus arrivals apply however long the page has been open.
+  const [leaveNow, setLeaveNow] = useState(true);
   const [stepFree, setStepFree] = useState(true);
   const [showCovered, setShowCovered] = useState(true);
   const [showStationGround, setShowStationGround] = useState(true);
@@ -194,13 +304,24 @@ export default function App() {
   const [simulateOutage, setSimulateOutage] = useState(false);
   const [simulatedStation, setSimulatedStation] = useState("NOVENA");
   const [dryRouteMode, setDryRouteMode] = useState(false);
+  const [simulateRain, setSimulateRain] = useState(false);
 
   const [coveredLinkways, setCoveredLinkways] = useState<CoveredLinkwayFeature[]>([]);
   const [stationGroundPolygons, setStationGroundPolygons] = useState<StationGroundFeature[]>([]);
   const [route, setRoute] = useState<RouteResponse | null>(null);
+  const [map, setMap] = useState<L.Map | null>(null);
+  const [rerouting, setRerouting] = useState(false);
+  const [planning, setPlanning] = useState(false);
+  // The request behind the route on screen: reroute follows that journey, not later form edits.
+  const [plannedRequest, setPlannedRequest] = useState<ReturnType<typeof journeyRequest> | null>(null);
+  // Only the latest plan/reroute may update the screen; slower, older responses are ignored.
+  const latestRequest = useRef(0);
+  const [layersOpen, setLayersOpen] = useState(isWideScreen);
   const [error, setError] = useState("");
   const originSuggestions = useLocationSuggestions(origin);
   const destinationSuggestions = useLocationSuggestions(destination);
+
+  const isDryRouteActive = dryRouteMode || Boolean(route?.rain_forecast?.rain_along_route);
 
   const routePoints: [number, number][] = route
     ? route.recommended_route.legs.flatMap((leg) => leg.geometry.map((point) => [point.lat, point.lon] as [number, number]))
@@ -264,31 +385,73 @@ export default function App() {
     return () => controller.abort();
   }, [showStationGround]);
 
+  function journeyRequest() {
+    return {
+      origin: { address: origin },
+      destination: { address: destination },
+      departure_date: leaveNow ? null : departureDate,
+      departure_time: leaveNow ? null : departureTime,
+      preferences: {
+        stepFree,
+        simulateLiftMaintenance: simulateOutage ? simulatedStation : null,
+        dryRoute: dryRouteMode,
+        simulateRain,
+      },
+    };
+  }
+
+  async function requestRoute(path: "plan" | "reroute", body: object, failureMessage: string): Promise<boolean> {
+    const requestId = ++latestRequest.current;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), ROUTE_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/routes/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const result = await response.json() as RouteResponse | { detail?: string };
+      if (requestId !== latestRequest.current) return false;
+      if (!response.ok) {
+        setError("detail" in result && typeof result.detail === "string" ? result.detail : failureMessage);
+        return false;
+      }
+      setRoute(result as RouteResponse);
+      return true;
+    } catch {
+      if (requestId === latestRequest.current) setError(controller.signal.aborted ? `${failureMessage} The request timed out.` : failureMessage);
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setRoute(null);
-
-    const response = await fetch(`${API_URL}/api/v1/routes/plan`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        origin: { address: origin },
-        destination: { address: destination },
-        departure_date: departureDate,
-        departure_time: departureTime,
-        preferences: {
-          stepFree,
-          simulateLiftMaintenance: simulateOutage ? simulatedStation : null,
-        },
-      }),
-    });
-    const result = await response.json() as RouteResponse | { detail?: string };
-    if (!response.ok) {
-      setError("detail" in result && result.detail ? result.detail : "Unable to plan this route.");
-      return;
+    setPlanning(true);
+    const request = journeyRequest();
+    try {
+      if (await requestRoute("plan", request, "Unable to plan this route.")) setPlannedRequest(request);
+    } finally {
+      setPlanning(false);
     }
-    setRoute(result as RouteResponse);
+  }
+
+  // Re-plan from the rider's current position, departing now. The backend runs the
+  // same exit, lift and accessibility checks as a fresh plan, so alternatives are verified.
+  async function handleReroute() {
+    if (!plannedRequest) return;
+    setRerouting(true);
+    setError("");
+    try {
+      const here = await currentPosition();
+      await requestRoute("reroute", { ...plannedRequest, current_location: here, reason: "rider_requested" }, "Unable to reroute right now.");
+    } finally {
+      setRerouting(false);
+    }
   }
 
   return (
@@ -324,9 +487,12 @@ export default function App() {
           </datalist>
 
           <div className="date-time">
-            <input aria-label="Departure date" type="date" value={departureDate} onChange={(event) => setDepartureDate(event.target.value)} required />
-            <input aria-label="Departure time" type="time" value={departureTime} onChange={(event) => setDepartureTime(event.target.value)} required />
+            <input aria-label="Departure date" type="date" value={departureDate} onChange={(event) => { setDepartureDate(event.target.value); setLeaveNow(false); }} required />
+            <input aria-label="Departure time" type="time" value={departureTime} onChange={(event) => { setDepartureTime(event.target.value); setLeaveNow(false); }} required />
           </div>
+          <p className="preference-description departure-mode">
+            {leaveNow ? "Leaving now — live bus times will be used." : <>Departing at the time above. <button type="button" className="link-button" onClick={() => { const now = sgNow(); setDepartureDate(now.date); setDepartureTime(now.time); setLeaveNow(true); }}>Leave now instead</button></>}
+          </p>
 
           <label className="preference-toggle">
             <input type="checkbox" checked={stepFree} onChange={(event) => setStepFree(event.target.checked)} aria-describedby="step-free-description" />
@@ -345,7 +511,16 @@ export default function App() {
           </p>
 
           <label className="preference-toggle dry-route-toggle">
-            <input type="checkbox" checked={dryRouteMode} onChange={(event) => setDryRouteMode(event.target.checked)} aria-describedby="dry-route-description" />
+            <input
+              type="checkbox"
+              checked={dryRouteMode}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setDryRouteMode(checked);
+                if (checked) setShowCovered(true);
+              }}
+              aria-describedby="dry-route-description"
+            />
             <span>🌧️ 100% Dry Route Mode</span>
           </label>
           <p className="preference-description" id="dry-route-description">
@@ -369,15 +544,71 @@ export default function App() {
                 <small>Demonstrates dynamic edge invalidation and rerouting around broken station lifts.</small>
               </div>
             )}
+
+            <label className="preference-toggle" style={{ marginTop: "10px" }}>
+              <input
+                type="checkbox"
+                checked={simulateRain}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setSimulateRain(checked);
+                  if (checked) {
+                    setDryRouteMode(true);
+                    setShowCovered(true);
+                  }
+                }}
+              />
+              <span>🌧️ Weather Simulator: Heavy Rainstorm</span>
+            </label>
+            {simulateRain && (
+              <div className="simulator-controls" style={{ background: "#f0fdf4", borderColor: "#bbf7d0" }}>
+                <small style={{ color: "#166534" }}>
+                  Simulates 5.4 mm/hr thundery downpour to demo real-time rain radar interception and 100% dry corridor rerouting.
+                </small>
+              </div>
+            )}
           </div>
 
-          <button type="submit">Find Wheelchair Route</button>
+          <button type="submit" disabled={planning || rerouting}>{planning ? "Planning…" : "Find Wheelchair Route"}</button>
         </form>
 
         {route && (
           <section className="route-details">
-            <h2>{route.recommended_route.total_duration_min} min</h2>
+            <h2>{route.recommended_route.estimated_arrival?.basis === "uncertain" ? "≥ " : ""}{route.recommended_route.estimated_arrival
+              ? Math.round((Date.parse(route.recommended_route.estimated_arrival.arrival) - Date.parse(route.recommended_route.estimated_arrival.departure)) / 60000)
+              : route.recommended_route.total_duration_min} min</h2>
             <p className="muted">{route.origin.label ?? "Origin"} to {route.destination.label ?? "Destination"}</p>
+            {route.recommended_route.estimated_arrival && (
+              <p className={`arrival-estimate ${route.recommended_route.estimated_arrival.basis}`} title={route.recommended_route.estimated_arrival.note}>
+                Arrive ~<strong>{sgTime(route.recommended_route.estimated_arrival.arrival)}</strong>
+                <span className="arrival-basis">{route.recommended_route.estimated_arrival.basis === "live" ? "● live bus times" : route.recommended_route.estimated_arrival.basis === "uncertain" ? "⚠ may be later" : "timetable estimate"}</span>
+              </p>
+            )}
+            {route.recommended_route.estimated_arrival?.basis === "uncertain" && (
+              <p className="arrival-caution">{route.recommended_route.estimated_arrival.note}</p>
+            )}
+            <button type="button" className="reroute-button" onClick={handleReroute} disabled={rerouting || planning || !plannedRequest}>
+              {rerouting ? "Rerouting…" : "↻ Reroute from my location"}
+            </button>
+            {route.reroute && (
+              <div className={`reroute-banner ${route.reroute.origin_source === "current_location" ? "" : "warning"}`} role="status">
+                <strong>
+                  {route.reroute.origin_source === "current_location"
+                    ? `Rerouted at ${sgTime(route.reroute.replanned_at)} from your current location`
+                    : `Rerouted at ${sgTime(route.reroute.replanned_at)} from your original start — your location was unavailable. Allow location access to reroute from where you are.`}
+                </strong>
+              </div>
+            )}
+            {(route.verification ?? []).length > 0 && (
+              <details className="verification-details" open={Boolean(route.reroute) || (route.verification ?? []).some((step) => step.status === "warning")}>
+                <summary>{route.reroute ? "What was re-checked for this reroute" : "What we checked"}</summary>
+                <ul className="verification-list">
+                  {(route.verification ?? []).map((step) => (
+                    <li key={step.stage} className={step.status}>{step.status === "done" ? "✓" : step.status === "skipped" ? "–" : "⚠"} {step.detail}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
 
             {/* Sheltered Walkways Summary */}
             {showCovered && nearbyLinkwaysCount > 0 && (
@@ -409,10 +640,10 @@ export default function App() {
                   )}
                 </div>
                 <p className="rain-recommendation">{route.rain_forecast.recommendation}</p>
-                {route.rain_forecast.rain_along_route && dryRouteMode && (
+                {(route.rain_forecast.rain_along_route || dryRouteMode) && (
                   <div className="dry-badge-container">
                     <span className="badge-dry">✓ 100% DRY GUARANTEED</span>
-                    <small>Using covered linkways, concourses, and underpasses only.</small>
+                    <small>Prioritizes covered linkways, concourses & underpasses. Zero open-air exposure.</small>
                   </div>
                 )}
               </div>
@@ -443,9 +674,14 @@ export default function App() {
                     <p>After alighting at <strong>{route.recommended_route.exit_routing.destination.station_name}</strong>, follow station signs for <strong>{route.recommended_route.exit_routing.destination.exit_name}</strong>.</p>
                     {route.accessibility.step_free && (() => {
                       const selected = route.recommended_route.exit_routing?.candidate_exits?.find((exit) => exit.id === route.recommended_route.exit_routing?.destination?.exit_id);
-                      return selected?.station_lift_alerts.length
+                      // No matching exit data means nothing is known; don't reassure.
+                      if (!selected) return null;
+                      if (selected.lift_status === "maintenance") {
+                        return <p className="highlight-text warning">⚠️ A lift at this exit is reported out of service: {selected.lift_alerts.join("; ")}. Ask station staff for a step-free alternative.</p>;
+                      }
+                      return selected.station_lift_alerts.length
                         ? <p className="highlight-text warning">⚠️ Other lift outages reported in this station: {selected.station_lift_alerts.join("; ")}. Allow extra time or ask station staff.</p>
-                        : <p className="highlight-text">🛗 No lift outage reported by LTA for this exit. Use lifts and ramps; avoid escalators and stairs.</p>;
+                        : <p className="highlight-text">No lift outage reported by LTA for this exit. Use lifts and ramps; avoid escalators and stairs.</p>;
                     })()}
                   </details>
                 )}
@@ -481,6 +717,11 @@ export default function App() {
                     </div>
                     <div className="leg-info-col">
                       <span>{leg.from} → {leg.to}</span>
+                      {leg.live_bus && (
+                        <span className={`live-bus ${leg.live_bus.status}`}>
+                          {leg.live_bus.status === "live" ? "🚌 " : ""}{liveBusSummary(leg.live_bus)}
+                        </span>
+                      )}
                       {isWalk && (
                         <div className="leg-accessibility-tags">
                           {isStepFree && <span className="tag-stepfree">✓ Step-Free / Ramp</span>}
@@ -502,8 +743,8 @@ export default function App() {
       </section>
 
       <section className="map-shell" aria-label="Route map">
-        {/* Floating Controls */}
-        <div className="map-floating-panel">
+        {/* Layer toggles: bottom-right thumb zone, opened from the dock's Layers button */}
+        {layersOpen && <div className="map-floating-panel" id="map-layer-panel">
           <label className="map-toggle-item">
             <input type="checkbox" checked={showCovered} onChange={(e) => setShowCovered(e.target.checked)} />
             <span>☂️ Sheltered Walkways</span>
@@ -523,17 +764,25 @@ export default function App() {
               <span className="count-pill">{route?.recommended_route.exit_routing?.candidate_exits?.length}</span>
             )}
           </label>
-          {route?.rain_forecast?.rain_along_route && (
+          {(route?.rain_forecast?.rain_along_route || dryRouteMode) && (
             <div className="map-dry-indicator">
               <span className="dry-indicator-dot"></span>
-              <span>Rain Expected — Dry Mode {dryRouteMode ? "ON" : "OFF"}</span>
+              <span>{dryRouteMode ? "🌧️ 100% Dry Mode ACTIVE" : "⚠️ Rain Expected Along Route"}</span>
             </div>
           )}
+        </div>}
+
+        {/* One-handed thumb dock (Feature 6): zoom, recenter and layers within reach while steering */}
+        <div className="thumb-dock" role="toolbar" aria-label="Map controls">
+          <button type="button" className={layersOpen ? "active" : ""} aria-label="Map layers" aria-expanded={layersOpen} aria-controls="map-layer-panel" onClick={() => setLayersOpen((open) => !open)}>🗂️</button>
+          <button type="button" aria-label={route ? "Recenter on route" : "Recenter on Singapore"} onClick={() => route ? map?.fitBounds(points, { padding: FIT_PADDING }) : map?.setView(SINGAPORE_CENTER, 12)}>◎</button>
+          <button type="button" aria-label="Zoom in" onClick={() => map?.zoomIn()}>+</button>
+          <button type="button" aria-label="Zoom out" onClick={() => map?.zoomOut()}>−</button>
         </div>
 
         {/* Enhanced Map Legend */}
-        <div className="map-legend">
-          <div className="legend-title">Map Layers & Accessibility</div>
+        <details className="map-legend" open={isWideScreen()}>
+          <summary className="legend-title">Map Layers & Accessibility</summary>
           <div className="legend-item">
             <span className="legend-line stepfree-line"></span>
             <span>Verified Step-Free / Ramp (#10b981)</span>
@@ -559,20 +808,24 @@ export default function App() {
             <span>Elevated Station Footprint</span>
           </div>
           <div className="legend-item">
-            <span className="legend-exit"><span className="exit-pin"><span className="exit-pin-code">A</span><span className="exit-pin-lift">🛗</span></span></span>
-            <span>Station Exit — no lift outage reported</span>
+            <span className="legend-exit"><span className="exit-pin unknown"><span className="exit-pin-code">A</span><span className="exit-pin-lift unknown">?</span></span></span>
+            <span>Station Exit — lift status unknown, no outage reported</span>
           </div>
           <div className="legend-item">
-            <span className="legend-exit"><span className="exit-pin outage"><span className="exit-pin-code">B</span><span className="exit-pin-lift down">🛗</span></span></span>
+            <span className="legend-exit"><span className="exit-pin station-alert"><span className="exit-pin-code">B</span><span className="exit-pin-lift station-alert">!</span></span></span>
+            <span>Station Exit — other lift outages in station</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-exit"><span className="exit-pin outage"><span className="exit-pin-code">C</span><span className="exit-pin-lift outage">🛗</span></span></span>
             <span>Station Exit — lift out of service</span>
           </div>
           <div className="legend-item">
-            <span className="legend-exit"><span className="exit-pin selected"><span className="exit-pin-code">C</span><span className="exit-pin-lift">🛗</span></span></span>
+            <span className="legend-exit"><span className="exit-pin unknown selected"><span className="exit-pin-code">D</span><span className="exit-pin-lift unknown">?</span></span></span>
             <span>Exit used by this route</span>
           </div>
-        </div>
+        </details>
 
-        <MapContainer center={points[0]} zoom={12} scrollWheelZoom>
+        <MapContainer ref={setMap} center={points[0]} zoom={12} scrollWheelZoom zoomControl={false}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>'
             url={TILE_URL}
@@ -626,23 +879,23 @@ export default function App() {
           {/* Sheltered Walkways (CoveredLinkWay) */}
           {showCovered && coveredLinkways.length > 0 && (
             <GeoJSON
-              key={`covered-linkways-${coveredLinkways.length}`}
+              key={`covered-linkways-${coveredLinkways.length}-${isDryRouteActive ? "dry" : "standard"}`}
               data={{
                 type: "FeatureCollection",
                 features: coveredLinkways,
               } as any}
               style={() => ({
-                color: dryRouteMode && route?.rain_forecast?.rain_along_route ? "#059669" : "#0099ff",
-                weight: dryRouteMode && route?.rain_forecast?.rain_along_route ? 5 : 3.5,
-                dashArray: dryRouteMode && route?.rain_forecast?.rain_along_route ? undefined : "4 6",
-                opacity: dryRouteMode && route?.rain_forecast?.rain_along_route ? 1.0 : 0.85,
+                color: isDryRouteActive ? "#059669" : "#0099ff",
+                weight: isDryRouteActive ? 5 : 3.5,
+                dashArray: isDryRouteActive ? undefined : "4 6",
+                opacity: isDryRouteActive ? 1.0 : 0.85,
               })}
               onEachFeature={(feature, layer) => {
                 layer.bindPopup(`
                   <div class="linkway-popup">
-                    <strong>${dryRouteMode && route?.rain_forecast?.rain_along_route ? "🌧️ 100% Dry Path" : "☂️ Sheltered Walkway"}</strong>
+                    <strong>${isDryRouteActive ? "🌧️ 100% Dry Path" : "☂️ Sheltered Walkway"}</strong>
                     <p>LTA CoveredLinkWay Network (ID: ${feature.properties?.id ?? "N/A"})</p>
-                    <span class="badge-sheltered">${dryRouteMode && route?.rain_forecast?.rain_along_route ? "Rain-Proof Continuous Coverage" : "Weather Protected (Rain & Sun)"}</span>
+                    <span class="badge-sheltered">${isDryRouteActive ? "Rain-Proof Continuous Coverage" : "Weather Protected (Rain & Sun)"}</span>
                   </div>
                 `);
               }}
@@ -652,7 +905,7 @@ export default function App() {
           {/* Route Rendering */}
           {route && (
             <>
-              <FitRoute points={points} />
+              <FitRoute route={route} points={points} />
 
               {/* Route Polyline Legs with Stairs/Ramps Differentiation */}
               {route.recommended_route.legs.map((leg, index) => {
@@ -708,27 +961,29 @@ export default function App() {
 
               {/* Candidate Station Exits with Lift Statuses */}
               {showExits && route.recommended_route.exit_routing?.candidate_exits?.map((exit) => {
-                const isMaint = exit.lift_status === "maintenance";
+                const liftState = exitLiftState(exit);
+                // Only claim avoidance when the route was planned step-free and did not use this exit.
+                const avoided = liftState === "outage" && route.accessibility.step_free && !exit.is_selected;
 
                 return (
                   <Marker
                     key={exit.id}
                     position={[exit.lat, exit.lon]}
                     icon={exitIcon(exit)}
-                    zIndexOffset={exit.is_selected ? 1000 : isMaint ? 500 : 0}
-                    title={`${exit.station_name} ${exit.exit_name}`}
+                    zIndexOffset={exit.is_selected ? 1000 : liftState === "outage" ? 500 : 0}
+                    title={`${exit.station_name} ${exit.exit_name}: ${EXIT_LIFT_TEXT[liftState]}${exit.is_selected ? " (used by this route)" : ""}`}
                   >
                     <Popup>
                       <div className="exit-marker-popup">
                         <strong>{exit.station_name} — {exit.exit_name}</strong>
-                        <div className={`lift-badge ${isMaint ? "down" : "active"}`}>
-                          {isMaint ? <><s>🛗</s> Lift out of service{stepFree ? " — exit avoided" : ""}</> : "🛗 No lift outage reported"}
+                        <div className={`lift-badge ${liftState}`}>
+                          {liftState === "outage" ? <><s>🛗</s> {EXIT_LIFT_TEXT.outage}{avoided ? " — avoided by step-free routing" : ""}</> : EXIT_LIFT_TEXT[liftState]}
                         </div>
-                        {exit.lift_alerts.map((alert) => <small key={alert} className="exit-alert">{alert}</small>)}
+                        {exit.lift_alerts.map((alert, index) => <small key={index} className="exit-alert">{alert}</small>)}
                         {exit.station_lift_alerts.length > 0 && (
                           <div className="station-lift-alerts">
                             <strong>⚠️ Other lift outages in this station</strong>
-                            {exit.station_lift_alerts.map((alert) => <small key={alert}>{alert}</small>)}
+                            {exit.station_lift_alerts.map((alert, index) => <small key={index}>{alert}</small>)}
                           </div>
                         )}
                         {exit.is_selected && <span className="selected-tag">★ Exit used by this route</span>}

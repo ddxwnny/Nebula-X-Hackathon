@@ -142,7 +142,7 @@ class TestDynamicBarrierInvalidation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(exit_a.lift_status, "maintenance", "Exit A should be marked maintenance")
         self.assertEqual(exit_b.lift_status, "no_reported_outage", "Exit B should have no reported outage")
         self.assertFalse(exit_a.is_selected, "Exit A with broken lift MUST NOT be selected")
-        self.assertTrue(exit_b.is_selected, "Exit B with working lift MUST be selected")
+        self.assertTrue(exit_b.is_selected, "Exit B, with no reported lift outage, MUST be selected")
 
 
 if __name__ == "__main__":

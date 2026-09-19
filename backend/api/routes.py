@@ -1,7 +1,7 @@
-from uuid import uuid4
-from fastapi import APIRouter, Depends
-from models.requests import RouteRequest
-from models.responses import LocationSuggestion, RouteResponse, RainForecast
+from datetime import datetime
+from fastapi import APIRouter, Depends, Query
+from models.requests import RerouteRequest, RouteRequest
+from models.responses import BusStopArrivals, LocationSuggestion, RainForecast, RerouteInfo, RouteResponse
 from services.geocoding_service import GeocodingService
 from services.routing_service import RoutingService
 from services.accessibility_service import AccessibilityService
@@ -9,7 +9,9 @@ from services.exit_routing_service import ExitRoutingService
 from services.covered_linkway_service import CoveredLinkwayService
 from services.station_ground_level_service import StationGroundLevelService
 from services.weather_service import WeatherService
-from clients.lta_datamall_client import LtaDataMallClient
+from services.live_transit_service import LiveTransitService
+from services.route_pipeline import RoutePipeline
+from services.routing_service import SGT
 
 router = APIRouter(tags=["routes"])
 
@@ -40,6 +42,10 @@ def get_station_ground_level_service() -> StationGroundLevelService:
 
 def get_weather_service() -> WeatherService:
     return WeatherService()
+
+
+def get_live_transit_service() -> LiveTransitService:
+    return LiveTransitService()
 
 
 @router.get("/geo/covered-linkways")
@@ -81,65 +87,59 @@ async def search_locations(query: str, geocoding_service: GeocodingService = Dep
     return await geocoding_service.search(query)
 
 
-@router.post("/routes/plan", response_model=RouteResponse)
-async def plan_route(
-    request: RouteRequest,
-    geocoding_service: GeocodingService = Depends(get_geocoding_service),
+def get_route_pipeline(
     routing_service: RoutingService = Depends(get_routing_service),
     accessibility_service: AccessibilityService = Depends(get_accessibility_service),
     exit_routing_service: ExitRoutingService = Depends(get_exit_routing_service),
     weather_service: WeatherService = Depends(get_weather_service),
-) -> RouteResponse:
-    if request.preferences.simulate_lift_maintenance:
-        lta_client = LtaDataMallClient()
-        lta_client.inject_simulated_maintenance(request.preferences.simulate_lift_maintenance)
-    else:
-        LtaDataMallClient.clear_simulated_maintenance()
+    live_transit_service: LiveTransitService = Depends(get_live_transit_service),
+) -> RoutePipeline:
+    return RoutePipeline(routing_service, accessibility_service, exit_routing_service, weather_service, live_transit_service)
 
+
+@router.post("/routes/plan", response_model=RouteResponse)
+async def plan_route(
+    request: RouteRequest,
+    geocoding_service: GeocodingService = Depends(get_geocoding_service),
+    pipeline: RoutePipeline = Depends(get_route_pipeline),
+) -> RouteResponse:
     origin = await geocoding_service.resolve_location(request.origin)
     destination = await geocoding_service.resolve_location(request.destination)
-    route = await routing_service.get_route(origin, destination, request.departure_date, request.departure_time)
-    route = await exit_routing_service.apply(route, origin, destination, request.preferences)
-    accessibility, decision = await accessibility_service.apply(route, request.preferences)
+    return await pipeline.run(origin, destination, request.departure_date, request.departure_time, request.preferences)
 
-    # Assess rain risk along the route
-    route_points = []
-    for leg in route.legs:
-        for pt in leg.geometry:
-            route_points.append((pt.lat, pt.lon))
-    if not route_points:
-        route_points = [(origin.lat, origin.lon), (destination.lat, destination.lon)]
 
-    rain_assessment = await weather_service.assess_route_rain_risk(route_points)
-    rain_forecast = RainForecast(
-        rain_along_route=rain_assessment["rain_along_route"],
-        rain_severity=rain_assessment["rain_severity"],
-        currently_raining=rain_assessment["current_rain"]["currently_raining"],
-        current_rainfall_mm=rain_assessment["current_rain"]["rainfall_mm"],
-        point_forecasts=[
-            {
-                "lat": pf["lat"],
-                "lon": pf["lon"],
-                "rain_expected": pf["rain_expected"],
-                "rain_severity": pf["rain_severity"],
-                "forecast_area": pf["forecast_area"],
-                "forecast_text": pf["forecast_text"],
-                "valid_period": pf["valid_period"],
-            }
-            for pf in rain_assessment["point_forecasts"]
-        ],
-        recommendation=rain_assessment["recommendation"],
+@router.post("/routes/reroute", response_model=RouteResponse)
+async def reroute(
+    request: RerouteRequest,
+    geocoding_service: GeocodingService = Depends(get_geocoding_service),
+    pipeline: RoutePipeline = Depends(get_route_pipeline),
+) -> RouteResponse:
+    """Re-plan from where the rider is now, departing now, through the full verification pipeline."""
+    now = datetime.now(SGT)
+    from_current = request.current_location is not None
+    origin = await geocoding_service.resolve_location(request.current_location if from_current else request.origin)
+    if from_current and not origin.label:
+        origin.label = "Your current location"
+    destination = await geocoding_service.resolve_location(request.destination)
+    response = await pipeline.run(origin, destination, now.date(), now.time().replace(second=0, microsecond=0), request.preferences)
+    exit_routing = response.recommended_route.exit_routing
+    response.reroute = RerouteInfo(
+        reason=request.reason,
+        origin_source="current_location" if from_current else "original_origin",
+        replanned_at=now,
+        exits_checked=len(exit_routing.candidate_exits) if exit_routing else 0,
     )
+    return response
 
-    return RouteResponse(
-        request_id=str(uuid4()),
-        origin=origin,
-        destination=destination,
-        recommended_route=route,
-        accessibility=accessibility,
-        decision=decision,
-        rain_forecast=rain_forecast,
-    )
+
+@router.get("/transit/bus-arrivals", response_model=BusStopArrivals)
+async def get_bus_arrivals(
+    stop_code: str = Query(pattern=r"^\d{5}$", description="5-digit LTA bus stop code"),
+    service_no: str | None = None,
+    live_transit_service: LiveTransitService = Depends(get_live_transit_service),
+) -> BusStopArrivals:
+    """Live LTA arrivals (next 3 buses per service, with wheelchair accessibility) for a bus stop."""
+    return await live_transit_service.stop_arrivals(stop_code, service_no)
 
 
 @router.get("/weather/rain-status", response_model=RainForecast)

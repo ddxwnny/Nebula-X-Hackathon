@@ -1,10 +1,12 @@
-from datetime import date, time
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import HTTPException
 from clients.onemap_client import OneMapClient
 from clients.routing_client import RoutingClient
 from config import get_settings
 from models.responses import Coordinates, Route, RouteLeg
+
+SGT = timezone(timedelta(hours=8))
 
 
 class RoutingService:
@@ -31,7 +33,31 @@ class RoutingService:
         raw_accessibility = str(leg.get("accessibility", "unknown")).lower()
         accessibility = raw_accessibility if raw_accessibility in {"step_free", "stairs", "lift", "ramp", "unknown", "inaccessible", "lift_maintenance"} else "unknown"
         normalised_mode = "mrt" if mode in {"rail", "subway", "metro", "train"} else mode
-        return RouteLeg(mode=normalised_mode, duration_min=round(float(leg["duration"]) / 60, 1), distance_m=float(leg.get("distance", 0)), from_location=leg.get("from", {}).get("name", "Origin"), to_location=leg.get("to", {}).get("name", "Destination"), geometry=RoutingService._decode_polyline(leg.get("legGeometry", {}).get("points", "")), line_name=leg.get("route"), accessibility=accessibility)
+        # OneMap (OpenTripPlanner) bus legs carry the LTA 5-digit stop code and the
+        # service number (routeId), which is what LTA BusArrival is keyed on.
+        is_bus = normalised_mode == "bus"
+        raw_stop = leg.get("from", {}).get("stopCode")
+        # LTA stop codes are 5 digits with leading zeros ("04167"); keep them if sent as a number.
+        stop_code = (f"{raw_stop:05d}" if isinstance(raw_stop, int) and not isinstance(raw_stop, bool) else str(raw_stop or "").strip()) if is_bus else ""
+        service_no = str(leg.get("routeId") or leg.get("routeShortName") or "").strip() if is_bus else ""
+        start_ms = leg.get("startTime") if leg.get("transitLeg") else None
+        try:
+            scheduled = datetime.fromtimestamp(start_ms / 1000, SGT) if isinstance(start_ms, (int, float)) and not isinstance(start_ms, bool) else None
+        except (OverflowError, OSError, ValueError):
+            scheduled = None
+        return RouteLeg(
+            mode=normalised_mode,
+            duration_min=round(float(leg["duration"]) / 60, 1),
+            distance_m=float(leg.get("distance", 0)),
+            from_location=leg.get("from", {}).get("name", "Origin"),
+            to_location=leg.get("to", {}).get("name", "Destination"),
+            geometry=RoutingService._decode_polyline(leg.get("legGeometry", {}).get("points", "")),
+            line_name=leg.get("route"),
+            accessibility=accessibility,
+            stop_code=stop_code or None,
+            service_no=service_no or None,
+            scheduled_departure=scheduled,
+        )
 
     @staticmethod
     def _decode_polyline(encoded: str) -> list[Coordinates]:

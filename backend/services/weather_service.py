@@ -30,12 +30,25 @@ _RAIN_CODE_MAP: dict[str, str] = {
     "Thundery Showers": "thunderstorm",
     "Heavy Thundery Showers": "thunderstorm",
     "Heavy Thundery Showers with Gusty Winds": "severe_thunderstorm",
+    "Showers": "rain",
+    "Moderate Rain": "rain",
+    "Heavy Showers": "heavy_rain",
+    "Light Showers": "light_rain",
+    "Partly Cloudy": "none",
+    "Cloudy": "none",
+    "Fair": "none",
+    "Fair (Day)": "none",
+    "Fair (Night)": "none",
 }
+
+_SEVERITY_ORDER = ["none", "light_rain", "rain", "heavy_rain", "thunderstorm", "severe_thunderstorm"]
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Approximate haversine distance in km between two lat/lon points."""
     import math
+    if lat1 == lat2 and lon1 == lon2:
+        return 0.0
     R = 6371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
@@ -78,8 +91,11 @@ class WeatherService:
                 data = resp.json()
                 self._cache[cache_key] = (now, data)
                 return data
-        except Exception as e:
-            logger.warning("Weather API fetch failed for %s: %s", url, e)
+        except httpx.HTTPStatusError as e:
+            logger.warning("Weather API HTTP error for %s: %s", url, e)
+            return None
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError) as e:
+            logger.warning("Weather API request failed for %s: %s", url, e)
             return None
 
     async def get_two_hour_nowcast(self) -> dict | None:
@@ -94,6 +110,25 @@ class WeatherService:
     async def get_rainfall_readings(self) -> dict | None:
         """Fetch real-time rainfall readings from data.gov.sg."""
         return await self._fetch_json(DATA_GOV_SG_RAINFALL_URL)
+
+    def _map_rain_severity(self, text: str) -> tuple[bool, str]:
+        """Map a forecast text string to (is_rain, severity_code)."""
+        if not text:
+            return False, "none"
+        mapped = _RAIN_CODE_MAP.get(text)
+        if mapped:
+            return mapped not in ("none", "unknown"), mapped
+        
+        low = text.lower()
+        if "thunder" in low:
+            return True, "thunderstorm"
+        if "heavy" in low and ("rain" in low or "shower" in low):
+            return True, "heavy_rain"
+        if "light" in low or "passing" in low:
+            return True, "light_rain"
+        if "rain" in low or "shower" in low:
+            return True, "rain"
+        return False, "none"
 
     def _parse_nowcast_for_point(
         self, nowcast: dict | None, lat: float, lon: float
@@ -116,11 +151,11 @@ class WeatherService:
                 "valid_period": "",
             }
 
-        region = _find_nearest_region(lat, lon)
-
-        # Parse the nowcast response
-        items = nowcast.get("data", {}).get("items", [])
+        data = nowcast.get("data", {})
+        area_metadata = data.get("area_metadata", [])
+        items = data.get("items", [])
         if not items:
+            region = _find_nearest_region(lat, lon)
             return {
                 "rain_expected": False,
                 "rain_severity": "unknown",
@@ -130,49 +165,62 @@ class WeatherService:
             }
 
         latest = items[0]
-        forecasts = latest.get("forecasts", [])
-        timestamp = latest.get("timestamp", "")
+        forecasts_list = latest.get("forecasts", [])
+        valid_period_obj = latest.get("valid_period", {})
+        valid_period_str = valid_period_obj.get("text", "") if isinstance(valid_period_obj, dict) else ""
+        if not valid_period_str:
+            timestamp = latest.get("timestamp", "")
+            valid_period_str = f"Next 2 hours from {timestamp}" if timestamp else "Next 2 hours"
 
-        for fc in forecasts:
-            area = fc.get("area", "")
-            # Match the forecast area to our region
-            area_lower = area.lower()
-            if region in area_lower or _haversine_km(
-                lat, lon,
-                _SG_REGION_CENTERS.get(region, (1.35, 103.82))[0],
-                _SG_REGION_CENTERS.get(region, (1.35, 103.82))[1],
-            ) < 10:
-                weather_code = fc.get("weather", "")
-                rain_severity = _RAIN_CODE_MAP.get(weather_code, "none")
-                rain_expected = rain_severity not in ("none", "unknown")
+        # Build dictionary of area name -> forecast text
+        # v2 API uses "forecast", older API used "weather"
+        forecast_by_area: dict[str, str] = {}
+        for fc in forecasts_list:
+            area_name = fc.get("area", "")
+            fc_text = fc.get("forecast") or fc.get("weather", "")
+            if area_name:
+                forecast_by_area[area_name] = fc_text
 
-                return {
-                    "rain_expected": rain_expected,
-                    "rain_severity": rain_severity,
-                    "forecast_area": area or region,
-                    "forecast_text": weather_code if weather_code else "Clear",
-                    "valid_period": f"Next 2 hours from {timestamp}",
-                }
+        best_area = ""
+        best_weather = ""
 
-        # If no exact match, use first forecast as fallback
-        if forecasts:
-            fc = forecasts[0]
-            weather_code = fc.get("weather", "")
-            rain_severity = _RAIN_CODE_MAP.get(weather_code, "none")
-            return {
-                "rain_expected": rain_severity not in ("none", "unknown"),
-                "rain_severity": rain_severity,
-                "forecast_area": fc.get("area", region),
-                "forecast_text": weather_code if weather_code else "Clear",
-                "valid_period": f"Next 2 hours from {timestamp}",
-            }
+        # Use area_metadata if available for accurate spatial matching
+        if area_metadata:
+            min_dist = float("inf")
+            for entry in area_metadata:
+                name = entry.get("name", "")
+                loc = entry.get("label_location", {})
+                alat = loc.get("latitude")
+                alon = loc.get("longitude")
+                if alat is not None and alon is not None:
+                    d = _haversine_km(lat, lon, alat, alon)
+                    if d < min_dist:
+                        min_dist = d
+                        best_area = name
+                        best_weather = forecast_by_area.get(name, "")
+
+        # Fallback to region matching if area_metadata not present
+        if not best_weather:
+            region = _find_nearest_region(lat, lon)
+            best_area = region
+            for area_name, fc_text in forecast_by_area.items():
+                if region in area_name.lower():
+                    best_area = area_name
+                    best_weather = fc_text
+                    break
+            if not best_weather and forecasts_list:
+                first_fc = forecasts_list[0]
+                best_area = first_fc.get("area", region)
+                best_weather = first_fc.get("forecast") or first_fc.get("weather", "")
+
+        rain_expected, rain_severity = self._map_rain_severity(best_weather)
 
         return {
-            "rain_expected": False,
-            "rain_severity": "none",
-            "forecast_area": region,
-            "forecast_text": "Clear",
-            "valid_period": "",
+            "rain_expected": rain_expected,
+            "rain_severity": rain_severity,
+            "forecast_area": best_area or "Singapore",
+            "forecast_text": best_weather if best_weather else "Fair",
+            "valid_period": valid_period_str,
         }
 
     def _parse_rainfall_for_point(
@@ -192,47 +240,90 @@ class WeatherService:
                 "rainfall_mm": 0.0,
             }
 
-        items = rainfall.get("data", {}).get("items", [])
-        if not items:
+        data = rainfall.get("data", {})
+        stations = data.get("stations", [])
+        readings_containers = data.get("readings", [])
+
+        # Map station_id -> rainfall_mm
+        station_readings: dict[str, float] = {}
+
+        # Format 1: data.gov.sg v2: readings is [{"timestamp": ..., "data": [{"stationId": ..., "value": ...}]}]
+        if readings_containers and isinstance(readings_containers, list):
+            first_entry = readings_containers[0]
+            readings_list = first_entry.get("data", []) if isinstance(first_entry, dict) else []
+            for item in readings_list:
+                stn_id = item.get("stationId") or item.get("station_id", "")
+                val = float(item.get("value", 0.0))
+                if stn_id:
+                    station_readings[stn_id] = val
+
+        # Format 2 fallback: older schema where data.items[0].readings exists
+        if not station_readings and "items" in data:
+            items = data.get("items", [])
+            if items:
+                for item in items[0].get("readings", []):
+                    stn_id = item.get("stationId") or item.get("station_id", "")
+                    val = float(item.get("value", 0.0))
+                    if stn_id:
+                        station_readings[stn_id] = val
+
+        if not stations:
+            # If no station metadata, check if any reading > 0
+            has_rain = any(v > 0 for v in station_readings.values())
             return {
-                "currently_raining": False,
-                "nearest_station": "unknown",
-                "rainfall_mm": 0.0,
+                "currently_raining": has_rain,
+                "nearest_station": "generic",
+                "rainfall_mm": max(station_readings.values()) if station_readings else 0.0,
             }
 
-        latest = items[0]
-        readings = latest.get("readings", [])
+        # Find nearest station to (lat, lon)
+        nearest_stn_name = "unknown"
+        nearest_stn_id = ""
+        min_dist = float("inf")
+        nearby_rain_mm = 0.0
 
-        best_station = "unknown"
-        best_dist = float("inf")
-        best_rainfall = 0.0
+        for stn in stations:
+            s_id = stn.get("id") or stn.get("deviceId", "")
+            s_name = stn.get("name", s_id)
+            loc = stn.get("location", {})
+            slat = loc.get("latitude")
+            slon = loc.get("longitude")
+            if slat is not None and slon is not None:
+                dist = _haversine_km(lat, lon, slat, slon)
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_stn_name = s_name
+                    nearest_stn_id = s_id
+                
+                # Check for active rain within 5km radius
+                if dist <= 5.0:
+                    val = station_readings.get(s_id, 0.0)
+                    if val > nearby_rain_mm:
+                        nearby_rain_mm = val
 
-        for reading in readings:
-            station = reading.get("station_id", "")
-            value = reading.get("value", 0.0)
-            # Rainfall stations have lat/lon in the metadata, but the API
-            # structure varies. We use the station readings directly.
-            # For simplicity, treat any non-zero reading as rain.
-            if value > 0 and best_rainfall == 0.0:
-                best_rainfall = value
-                best_station = station
+        stn_val = station_readings.get(nearest_stn_id, 0.0)
+        final_rainfall = max(stn_val, nearby_rain_mm)
 
         return {
-            "currently_raining": best_rainfall > 0.0,
-            "nearest_station": best_station,
-            "rainfall_mm": best_rainfall,
+            "currently_raining": final_rainfall > 0.0,
+            "nearest_station": nearest_stn_name,
+            "rainfall_mm": final_rainfall,
         }
 
     async def assess_route_rain_risk(
         self,
         route_points: list[tuple[float, float]],
         departure_time: datetime | None = None,
+        simulate_rain: bool = False,
+        dry_route: bool = False,
     ) -> dict:
         """Assess rain risk for an entire route.
 
         Args:
             route_points: List of (lat, lon) tuples along the route.
             departure_time: When the commuter departs. If None, uses now.
+            simulate_rain: Demo flag to simulate active rain along the route.
+            dry_route: User preference requesting 100% weather-protected route.
 
         Returns a comprehensive rain assessment:
           - rain_along_route: bool (is rain expected anywhere along the route?)
@@ -241,6 +332,42 @@ class WeatherService:
           - current_rain: current rainfall status
           - recommendation: str (human-readable advice)
         """
+        if simulate_rain:
+            simulated_points = [
+                {
+                    "lat": pt[0],
+                    "lon": pt[1],
+                    "rain_expected": True,
+                    "rain_severity": "thunderstorm",
+                    "forecast_area": "Simulated Storm Zone",
+                    "forecast_text": "Thundery Showers (Simulated)",
+                    "valid_period": "Next 2 hours",
+                }
+                for pt in (route_points[:3] if route_points else [(1.35, 103.82)])
+            ]
+            current_rain = {
+                "currently_raining": True,
+                "nearest_station": "Demo Weather Station (Simulated)",
+                "rainfall_mm": 5.4,
+            }
+            if dry_route:
+                recommendation = (
+                    "✓ 100% Dry Route Activated: Heavy rain intercepted! Route strictly routes "
+                    "through covered linkways, underpasses, and indoor concourses. Zero open-air exposure."
+                )
+            else:
+                recommendation = (
+                    "Thundery showers detected along the route. "
+                    "Enable 'Dry Route Mode' to navigate exclusively through covered linkways and concourses."
+                )
+            return {
+                "rain_along_route": True,
+                "rain_severity": "thunderstorm",
+                "current_rain": current_rain,
+                "point_forecasts": simulated_points,
+                "recommendation": recommendation,
+            }
+
         nowcast_data, rainfall_data = await asyncio.gather(
             self.get_two_hour_nowcast(),
             self.get_rainfall_readings(),
@@ -264,8 +391,10 @@ class WeatherService:
 
             if forecast["rain_expected"]:
                 any_rain = True
-                severity_order = ["none", "light_rain", "rain", "heavy_rain", "thunderstorm", "severe_thunderstorm"]
-                if severity_order.index(forecast["rain_severity"]) > severity_order.index(worst_severity):
+                sev = forecast["rain_severity"]
+                sev_idx = _SEVERITY_ORDER.index(sev) if sev in _SEVERITY_ORDER else 0
+                worst_idx = _SEVERITY_ORDER.index(worst_severity) if worst_severity in _SEVERITY_ORDER else 0
+                if sev_idx > worst_idx:
                     worst_severity = forecast["rain_severity"]
 
         current = self._parse_rainfall_for_point(
@@ -274,8 +403,25 @@ class WeatherService:
             route_points[0][1] if route_points else 103.82,
         )
 
-        # Build recommendation
+        # If current rainfall is detected, ensure any_rain is true
         if current["currently_raining"]:
+            any_rain = True
+            if worst_severity == "none":
+                worst_severity = "rain"
+
+        # Build recommendation
+        if dry_route:
+            if any_rain or current["currently_raining"]:
+                recommendation = (
+                    f"✓ 100% Dry Route Activated: Rain detected ({current['rainfall_mm']:.1f}mm). "
+                    "Navigating strictly via covered linkways, MRT concourses, and sheltered paths."
+                )
+            else:
+                recommendation = (
+                    "✓ 100% Dry Route Mode Active: Sheltered linkways and covered station concourses "
+                    "are prioritized for continuous weather protection."
+                )
+        elif current["currently_raining"]:
             recommendation = (
                 f"Rain is currently falling ({current['rainfall_mm']:.1f}mm). "
                 "Use sheltered walkways and covered linkways for all walking legs."
@@ -291,7 +437,7 @@ class WeatherService:
             label = severity_labels.get(worst_severity, "rain")
             recommendation = (
                 f"{label.title()} is forecasted within the next 2 hours. "
-                "Consider the 100% Dry Route using covered linkways and indoor concourses."
+                "Consider activating 100% Dry Route to utilize covered linkways and indoor concourses."
             )
         else:
             recommendation = (
@@ -300,7 +446,7 @@ class WeatherService:
             )
 
         return {
-            "rain_along_route": any_rain,
+            "rain_along_route": any_rain or (dry_route and (any_rain or current["currently_raining"])),
             "rain_severity": worst_severity if any_rain else "none",
             "current_rain": current,
             "point_forecasts": point_forecasts,

@@ -40,11 +40,60 @@ class LtaDataMallClient:
                     payload = response.json()
             features = payload.get("features", [])
             rows = [{**feature.get("properties", {}), "_coordinates": feature.get("geometry", {}).get("coordinates", [])} for feature in features]
-        except (httpx.HTTPError, ValueError, TypeError):
-            return []
-        self._exit_cache = [exit_ for row in rows if (exit_ := self._normalise_exit(row))]
-        self._exit_cache_until = now + timedelta(hours=24)
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            # data.gov.sg rate-limits this dataset (429): keep serving the last good copy and
+            # back off, so every request does not hit the rate-limited endpoint again.
+            LtaDataMallClient._exit_cache_until = now + (self.EXIT_RETRY_WITH_CACHE if self._exit_cache else self.EXIT_RETRY_EMPTY)
+            return self._exit_cache
+        # Stored on the class: every request builds fresh clients, and a
+        # per-instance cache re-downloaded the dataset until it was rate-limited.
+        LtaDataMallClient._exit_cache = [exit_ for row in rows if (exit_ := self._normalise_exit(row))]
+        LtaDataMallClient._exit_cache_until = now + timedelta(hours=24)
         return self._exit_cache
+
+    # Shared across instances (each request builds new clients). LTA refreshes
+    # BusArrival roughly every 20s, so a short cache avoids hammering it.
+    _bus_arrival_cache: dict[str, tuple[datetime, list[dict] | None]] = {}
+    BUS_ARRIVAL_TTL = timedelta(seconds=20)
+    BUS_ARRIVAL_FAILURE_TTL = timedelta(seconds=10)
+    BUS_ARRIVAL_CACHE_MAX = 500
+    EXIT_RETRY_WITH_CACHE = timedelta(minutes=5)
+    EXIT_RETRY_EMPTY = timedelta(minutes=1)
+
+    async def bus_arrivals(self, stop_code: str) -> list[dict] | None:
+        """Raw LTA v3/BusArrival services for a stop, or None when live data is unavailable."""
+        stop_code = str(stop_code or "").strip()
+        settings = get_settings()
+        if not stop_code or not settings.lta_datamall_account_key:
+            return None
+        now = datetime.now(timezone.utc)
+        cached = LtaDataMallClient._bus_arrival_cache.get(stop_code)
+        if cached and now < cached[0]:
+            return cached[1]
+        headers = {"AccountKey": settings.lta_datamall_account_key, "accept": "application/json"}
+        services: list[dict] | None
+        try:
+            async with httpx.AsyncClient(timeout=settings.http_timeout_seconds) as client:
+                response = await client.get(f"{self.BASE_URL}/v3/BusArrival", params={"BusStopCode": stop_code}, headers=headers)
+                response.raise_for_status()
+                payload = response.json().get("Services", [])
+            services = [service for service in payload if isinstance(service, dict)] if isinstance(payload, list) else None
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            services = None
+        # Failures are cached briefly too, so a rate-limited LTA is not retried on every request.
+        self._store_bus_arrivals(stop_code, services, now + (self.BUS_ARRIVAL_TTL if services is not None else self.BUS_ARRIVAL_FAILURE_TTL), now)
+        return services
+
+    @classmethod
+    def _store_bus_arrivals(cls, stop_code: str, services: list[dict] | None, until: datetime, now: datetime) -> None:
+        cache = cls._bus_arrival_cache
+        cache.pop(stop_code, None)  # a refresh re-inserts at the back and never evicts another stop
+        if len(cache) >= cls.BUS_ARRIVAL_CACHE_MAX:
+            for key in [key for key, (expiry, _) in cache.items() if expiry <= now]:
+                del cache[key]
+            while len(cache) >= cls.BUS_ARRIVAL_CACHE_MAX:
+                del cache[next(iter(cache))]
+        cache[stop_code] = (until, services)
 
     async def all_lift_maintenance(self) -> list[dict]:
         """Fetch all active lift/facility maintenance events across the entire rail network."""
@@ -112,13 +161,15 @@ class LtaDataMallClient:
                 cls._maintenance_cache.pop(k, None)
 
     async def lift_statuses(self, station_code: str) -> dict[str, dict]:
+        # A blank name would equal every blank-named outage record.
+        if not station_key(station_code):
+            return {}
         now = datetime.now(timezone.utc)
         station_normal = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
         cached = self._maintenance_cache.get(station_code) or self._maintenance_cache.get(station_normal)
         if cached and now < cached[0]:
             return cached[1]
         all_maintenance = await self.all_lift_maintenance()
-        station_normal = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
         matched: dict[str, dict] = {}
         for idx, item in enumerate(all_maintenance):
             # Exact name match: substring matching let "Punggol Point" outages

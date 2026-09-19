@@ -31,6 +31,8 @@ class RoutePreferences(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     step_free: bool = Field(default=False, validation_alias="stepFree", serialization_alias="stepFree")
     simulate_lift_maintenance: str | None = Field(default=None, validation_alias="simulateLiftMaintenance", serialization_alias="simulateLiftMaintenance")
+    dry_route: bool = Field(default=False, validation_alias="dryRoute", serialization_alias="dryRoute")
+    simulate_rain: bool = Field(default=False, validation_alias="simulateRain", serialization_alias="simulateRain")
 
 
 class RouteRequest(BaseModel):
@@ -39,3 +41,9 @@ class RouteRequest(BaseModel):
     departure_date: date | None = None
     departure_time: time | None = None
     preferences: RoutePreferences = Field(default_factory=RoutePreferences)
+
+
+class RerouteRequest(RouteRequest):
+    """The original journey plus where the rider is now; the reroute departs immediately."""
+    current_location: Location | None = None
+    reason: str | None = Field(default=None, max_length=64)

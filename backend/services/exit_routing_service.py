@@ -153,7 +153,7 @@ class ExitRoutingService:
         geometry = RoutingService._decode_polyline(walking.get("route_geometry", ""))
         exit_name = exit_label(selected["exit_id"])
 
-        # Assign verified step-free accessibility if selected exit has operational lift
+        # Step-free when the selected exit has no reported lift outage (LTA publishes outages, not a lift inventory)
         leg_accessibility = "step_free" if preferences.step_free else existing.accessibility
 
         route.legs[index] = RouteLeg(
