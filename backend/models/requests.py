@@ -1,6 +1,6 @@
 from datetime import date, time
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from models.responses import Coordinates
 
 
@@ -27,8 +27,14 @@ class Location(BaseModel):
         return Coordinates(lat=self.lat, lon=self.lon, label=self.address) if self.lat is not None and self.lon is not None else None
 
 
+class RoutePreferences(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    step_free: bool = Field(default=False, validation_alias="stepFree", serialization_alias="stepFree")
+
+
 class RouteRequest(BaseModel):
     origin: Location
     destination: Location
     departure_date: date | None = None
     departure_time: time | None = None
+    preferences: RoutePreferences = Field(default_factory=RoutePreferences)

@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     onemap_access_token: str | None = None
     onemap_email: str | None = None
     onemap_password: str | None = None
+    lta_datamall_account_key: str | None = None
+    lta_station_exits_geojson_url: str = "https://api-open.data.gov.sg/v1/public/api/datasets/d_b39d3a0871985372d7e1637193335da5/poll-download"
     http_timeout_seconds: float = 12.0
 
 

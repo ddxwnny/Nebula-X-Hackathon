@@ -33,6 +33,13 @@ class OneMapClient:
         self._check(response, "transit routing")
         return response.json()
 
+    async def walking_route(self, origin: Coordinates, destination: Coordinates) -> dict:
+        token = await self._token()
+        async with httpx.AsyncClient(timeout=self.settings.http_timeout_seconds) as client:
+            response = await client.get(f"{self.settings.onemap_base_url}/api/public/routingsvc/route", params={"start": f"{origin.lat},{origin.lon}", "end": f"{destination.lat},{destination.lon}", "routeType": "walk"}, headers={"Authorization": token})
+        self._check(response, "walking routing")
+        return response.json()
+
     async def _token(self) -> str:
         if self.settings.onemap_access_token:
             return self.settings.onemap_access_token

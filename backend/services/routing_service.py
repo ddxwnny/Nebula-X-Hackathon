@@ -28,7 +28,10 @@ class RoutingService:
     @staticmethod
     def _to_leg(leg: dict) -> RouteLeg:
         mode = str(leg.get("mode", "")).lower()
-        return RouteLeg(mode="mrt" if mode == "rail" else mode, duration_min=round(float(leg["duration"]) / 60, 1), distance_m=float(leg.get("distance", 0)), from_location=leg.get("from", {}).get("name", "Origin"), to_location=leg.get("to", {}).get("name", "Destination"), geometry=RoutingService._decode_polyline(leg.get("legGeometry", {}).get("points", "")), line_name=leg.get("route"))
+        raw_accessibility = str(leg.get("accessibility", "unknown")).lower()
+        accessibility = raw_accessibility if raw_accessibility in {"step_free", "stairs", "lift", "ramp", "unknown", "inaccessible", "lift_maintenance"} else "unknown"
+        normalised_mode = "mrt" if mode in {"rail", "subway", "metro", "train"} else mode
+        return RouteLeg(mode=normalised_mode, duration_min=round(float(leg["duration"]) / 60, 1), distance_m=float(leg.get("distance", 0)), from_location=leg.get("from", {}).get("name", "Origin"), to_location=leg.get("to", {}).get("name", "Destination"), geometry=RoutingService._decode_polyline(leg.get("legGeometry", {}).get("points", "")), line_name=leg.get("route"), accessibility=accessibility)
 
     @staticmethod
     def _decode_polyline(encoded: str) -> list[Coordinates]:
