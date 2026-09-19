@@ -33,6 +33,7 @@ class RoutePreferences(BaseModel):
     simulate_lift_maintenance: str | None = Field(default=None, validation_alias="simulateLiftMaintenance", serialization_alias="simulateLiftMaintenance")
     dry_route: bool = Field(default=False, validation_alias="dryRoute", serialization_alias="dryRoute")
     simulate_rain: bool = Field(default=False, validation_alias="simulateRain", serialization_alias="simulateRain")
+    crowd_control: bool = Field(default=True, validation_alias="crowdControl", serialization_alias="crowdControl")
 
 
 class RouteRequest(BaseModel):
