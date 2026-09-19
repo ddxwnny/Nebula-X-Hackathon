@@ -79,7 +79,7 @@ type RerouteData = {
   change: { additional_duration_min: number; reason: string | { type: string; message: string } };
 };
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL ?? "";
 
 function useLocationSuggestions(query: string) {
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);

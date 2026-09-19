@@ -23,9 +23,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://localhost:8000
+        - VITE_API_URL=""
     container_name: nebula-frontend
     ports:
+      - "80:80"
       - "5173:80"
     depends_on:
       backend:
