@@ -1,6 +1,6 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query
-from models.disruptions import TrainServiceStatus
+from models.disruptions import TrainDisruption, TrainServiceStatus
 from models.journeys import CreateJourneyRequest, CreateJourneyResponse, JourneyRerouteResponse, JourneyStatusResponse
 from models.requests import RerouteRequest, RouteRequest
 from models.responses import BusStopArrivals, LocationSuggestion, RainForecast, RerouteInfo, RouteResponse
@@ -121,7 +121,17 @@ async def create_journey(
     disruption_monitor: DisruptionMonitor = Depends(get_disruption_monitor),
 ) -> CreateJourneyResponse:
     journey = journey_service.create_journey(request)
-    if disruption_monitor.current_status:
+    if request.simulate_disruption:
+        demo = request.simulate_disruption
+        journey.active_disruption = TrainDisruption(
+            line=str(demo.get("line") or ""),
+            stations=[str(station) for station in demo.get("stations", demo.get("affected_stations", []))],
+            direction=str(demo.get("direction") or "Both"),
+        )
+        journey.disruption_stations_affected = journey.active_disruption.stations
+        journey.status = "reroute_required"
+        journey.simulated_disruption = True
+    if disruption_monitor.current_status and not request.simulate_disruption:
         journey_service.evaluate_journey_disruption(journey, disruption_monitor.current_status)
     return CreateJourneyResponse(journey_id=journey.journey_id, status=journey.status, route_id=journey.route_id)
 

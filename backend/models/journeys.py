@@ -41,6 +41,10 @@ class CreateJourneyRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("current_position", "currentPosition"),
     )
+    simulate_disruption: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("simulate_disruption", "simulateDisruption"),
+    )
 
 
 class CreateJourneyResponse(BaseModel):

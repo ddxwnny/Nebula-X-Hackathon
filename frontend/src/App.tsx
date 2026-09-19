@@ -246,6 +246,7 @@ export default function App() {
     "Accessibility",
   ]);
   const [mapError, setMapError] = useState(false);
+  const [demoDisruption, setDemoDisruption] = useState(false);
   const [coveredLinkways, setCoveredLinkways] = useState<GeoFeature[]>([]);
   const [stationGroundLevels, setStationGroundLevels] = useState<GeoFeature[]>([]);
   const [weatherStatus, setWeatherStatus] = useState<RainStatus | null>(null);
@@ -261,7 +262,15 @@ export default function App() {
     0;
   const remaining = legs;
   const currentPosition = accepted ? alternativeOrigin : route?.origin;
-  const disruption = journey?.disruption;
+  const demoSegment = remaining.find((leg) => leg.mode.toLowerCase() === "mrt");
+  const demoDisruptionInfo = demoSegment
+    ? {
+        line: lineInfo(demoSegment.line_name ?? demoSegment.line)?.code ?? demoSegment.line_name ?? "EWL",
+        affected_stations: [demoSegment.from, demoSegment.to],
+        message: "Demo disruption enabled for this journey.",
+      }
+    : undefined;
+  const disruption = demoDisruption ? demoDisruptionInfo : journey?.disruption;
   const disruptionKey = JSON.stringify(disruption ?? null);
   useEffect(() => {
     setPreview(null);
@@ -383,6 +392,9 @@ export default function App() {
         ...leg,
         line: leg.line_name ?? leg.line,
       })),
+      ...(demoDisruption && demoDisruptionInfo
+        ? { simulate_disruption: demoDisruptionInfo }
+        : {}),
     };
   }
   useEffect(() => {
@@ -435,7 +447,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [route, accepted, refresh, online]);
+  }, [route, accepted, refresh, online, demoDisruption]);
   async function plan(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
@@ -716,6 +728,18 @@ export default function App() {
               </span>
               <Icon name="access" />
             </label>
+            <label className="checkbox preference demo-toggle">
+              <input
+                type="checkbox"
+                checked={demoDisruption}
+                onChange={(e) => setDemoDisruption(e.target.checked)}
+              />
+              <span>
+                <strong>Demo disruption</strong>
+                <small>Show the alternative-route flow without a live outage.</small>
+              </span>
+              <Icon name="bell" />
+            </label>
             <div className="conditions">
               <span>
                 <Icon name="train" size={16} />
@@ -969,6 +993,14 @@ export default function App() {
                     Retry updates
                   </button>
                 </div>
+              )}
+              {!disruption && (
+                <button
+                  className="secondary demo-disruption-button"
+                  onClick={() => setDemoDisruption(true)}
+                >
+                  Demo a disruption on this route
+                </button>
               )}
               {disruption && (
                 <div className="journey-warning" role="alert">
