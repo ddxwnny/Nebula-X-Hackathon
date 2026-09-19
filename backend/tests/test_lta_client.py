@@ -109,6 +109,47 @@ class TestLTAClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status2.status, 2)
         self.assertEqual(len(status2.affected_segments), 1)
 
+    @patch("httpx.AsyncClient.get")
+    async def test_station_exits_fetch_and_cache(self, mock_get):
+        mock_resp = AsyncMock()
+        mock_resp.raise_for_status = lambda: None
+        mock_resp.json = lambda: {
+            "features": [
+                {
+                    "geometry": {"coordinates": [103.9463, 1.3273]},
+                    "properties": {
+                        "STATION_NA": "TANAH MERAH MRT STATION",
+                        "STN_NO": "EW4",
+                        "EXIT_CODE": "B",
+                    },
+                }
+            ]
+        }
+        mock_get.return_value = mock_resp
+
+        # Clear cache first
+        LTAClient._exit_cache = []
+        from datetime import datetime, timezone
+        LTAClient._exit_cache_until = datetime.min.replace(tzinfo=timezone.utc)
+
+        exits = await self.client.station_exits()
+        self.assertEqual(len(exits), 1)
+        self.assertEqual(exits[0]["station_code"], "EW4")
+        self.assertEqual(exits[0]["station_name"], "TANAH MERAH MRT STATION")
+        self.assertEqual(exits[0]["exit_id"], "B")
+        self.assertAlmostEqual(exits[0]["lat"], 1.3273)
+        self.assertAlmostEqual(exits[0]["lon"], 103.9463)
+
+        # Call again, should use cache without calling mock_get again
+        mock_get.reset_mock()
+        cached_exits = await self.client.station_exits()
+        self.assertEqual(len(cached_exits), 1)
+        mock_get.assert_not_called()
+
+    def test_datamall_client_backwards_compatibility(self):
+        from clients.lta_datamall_client import LtaDataMallClient
+        self.assertIs(LtaDataMallClient, LTAClient)
+
 
 if __name__ == "__main__":
     unittest.main()

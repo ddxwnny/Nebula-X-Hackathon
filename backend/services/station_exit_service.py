@@ -18,15 +18,36 @@ class StationExitService:
 
     async def exits_for_station(self, station_id: str) -> list[dict]:
         try:
-            return [exit_ for exit_ in await self._client.station_exits() if exit_["station_id"] == station_id]
+            sid = station_id.strip().upper()
+            return [
+                exit_ for exit_ in await self._client.station_exits()
+                if exit_.get("station_id", "").upper() == sid
+                or (exit_.get("station_code") and exit_["station_code"].upper() == sid)
+                or (exit_.get("station_name") and exit_["station_name"].upper() == sid)
+            ]
         except (httpx.HTTPError, ValueError, TypeError):
             return []
 
     async def exits_for_station_name(self, station_name: str) -> list[dict]:
-        """Match the official LTA station name; never substitute another station."""
-        normalise = lambda value: " ".join(value.upper().replace(" STN", " STATION").split())
+        """Match the official LTA station name or code; never substitute another station."""
+        from services.mrt_network import _clean_station_name, station_code_for_name, STATION_NAME_TO_CODES
+
+        clean_target = _clean_station_name(station_name)
+        target_codes = set(STATION_NAME_TO_CODES.get(clean_target, []))
+        code_target = station_code_for_name(station_name)
+        if code_target:
+            target_codes.add(code_target.upper())
+
         try:
-            target = normalise(station_name)
-            return [exit_ for exit_ in await self._client.station_exits() if normalise(exit_["station_id"]) == target]
+            exits = await self._client.station_exits()
+            matches = []
+            for exit_ in exits:
+                s_name = exit_.get("station_name") or exit_.get("station_id") or ""
+                s_code = exit_.get("station_code") or ""
+                if _clean_station_name(s_name) == clean_target:
+                    matches.append(exit_)
+                elif (s_code and s_code.upper() in target_codes) or (s_name.upper() in target_codes):
+                    matches.append(exit_)
+            return matches
         except (httpx.HTTPError, ValueError, TypeError):
             return []
