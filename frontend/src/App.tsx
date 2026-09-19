@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -97,6 +97,74 @@ function useLocationSuggestions(query: string) {
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [query]);
   return suggestions;
+}
+
+function AutocompleteInput({
+  label,
+  placeholder,
+  value,
+  onChange,
+  suggestions,
+  required,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (val: string) => void;
+  suggestions: LocationSuggestion[];
+  required?: boolean;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="autocomplete-wrapper" ref={wrapperRef}>
+      <input
+        aria-label={label}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => {
+          if (suggestions.length > 0) setIsOpen(true);
+        }}
+        required={required}
+        autoComplete="off"
+      />
+      {isOpen && suggestions.length > 0 && (
+        <ul className="suggestions-dropdown" role="listbox">
+          {suggestions.map((item, idx) => (
+            <li
+              key={`${item.address}-${idx}`}
+              role="option"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(item.address);
+                setIsOpen(false);
+              }}
+            >
+              <div className="suggestion-title">{item.label ?? item.address}</div>
+              {item.label && item.label !== item.address && (
+                <div className="suggestion-subtitle">{item.address}</div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function FitRoute({ points }: { points: [number, number][] }) {
@@ -248,10 +316,22 @@ export default function App() {
       <section className="panel">
         <h1>Route planner</h1>
         <form onSubmit={handleSubmit}>
-          <input aria-label="Origin" placeholder="Origin" list="origin-suggestions" value={origin} onChange={(event) => setOrigin(event.target.value)} required />
-          <datalist id="origin-suggestions">{originSuggestions.map((location) => <option key={location.address} value={location.address} />)}</datalist>
-          <input aria-label="Destination" placeholder="Destination" list="destination-suggestions" value={destination} onChange={(event) => setDestination(event.target.value)} required />
-          <datalist id="destination-suggestions">{destinationSuggestions.map((location) => <option key={location.address} value={location.address} />)}</datalist>
+          <AutocompleteInput
+            label="Origin"
+            placeholder="Origin (e.g. Tanah Merah MRT, Tampines)"
+            value={origin}
+            onChange={setOrigin}
+            suggestions={originSuggestions}
+            required
+          />
+          <AutocompleteInput
+            label="Destination"
+            placeholder="Destination (e.g. Orchard, Marina Bay)"
+            value={destination}
+            onChange={setDestination}
+            suggestions={destinationSuggestions}
+            required
+          />
           <div className="date-time"><input aria-label="Departure date" type="date" value={departureDate} onChange={(event) => setDepartureDate(event.target.value)} required /><input aria-label="Departure time" type="time" value={departureTime} onChange={(event) => setDepartureTime(event.target.value)} required /></div>
           <label className="preference-toggle"><input type="checkbox" checked={stepFree} onChange={(event) => setStepFree(event.target.checked)} aria-describedby="step-free-description" /><span>Step-free route</span></label>
           <p className="preference-description" id="step-free-description">Avoid stairs. Prefer lifts and ramps.</p>
