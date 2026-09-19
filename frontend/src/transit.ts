@@ -59,9 +59,14 @@ export function singaporeNow() {
     time: `${get("hour")}:${get("minute")}`,
   };
 }
+const rawApiUrl = (import.meta.env.VITE_API_URL ?? "").trim();
+const API_BASE_URL =
+  rawApiUrl === '""' || rawApiUrl === "''" ? "" : rawApiUrl.replace(/^["']|["']$/g, "").replace(/\/+$/, "");
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const response = await fetch(
-    `${import.meta.env.VITE_API_URL ?? ""}/api/v1${path}`,
+    `${API_BASE_URL}/api/v1${normalizedPath}`,
     { ...init, signal: init.signal ?? AbortSignal.timeout(25000) },
   );
   if (!response.ok)
