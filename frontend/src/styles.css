@@ -422,6 +422,16 @@ small {
   margin-left: auto;
   color: #8f889f;
 }
+.demo-toggle {
+  color: #8a4b00;
+}
+.demo-toggle input {
+  accent-color: #d97706;
+}
+.demo-disruption-button {
+  width: 100%;
+  margin: 8px 0;
+}
 .conditions {
   display: grid;
   gap: 9px;

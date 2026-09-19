@@ -20,8 +20,13 @@ class Settings(BaseSettings):
     disruption_poll_interval_seconds: float = 30.0
     enable_background_disruption_monitor: bool = False
     http_timeout_seconds: float = 12.0
+    display_interval_minutes: int = 5
+
+
+DISPLAY_INTERVAL_MINUTES: int = 5
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+

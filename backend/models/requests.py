@@ -1,19 +1,13 @@
 from datetime import date, time
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from models.responses import Coordinates
 
 
 class Location(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    address: str | None = Field(default=None, validation_alias=AliasChoices("address", "label"))
+    address: str | None = None
     lat: float | None = None
     lon: float | None = None
-
-    @property
-    def label(self) -> str | None:
-        return self.address
 
     @model_validator(mode="after")
     def validate_source(self) -> "Location":
@@ -35,14 +29,22 @@ class Location(BaseModel):
 
 class RoutePreferences(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    step_free: bool = Field(default=False, validation_alias=AliasChoices("stepFree", "step_free"), serialization_alias="stepFree")
+    step_free: bool = Field(default=False, validation_alias="stepFree", serialization_alias="stepFree")
+    simulate_lift_maintenance: str | None = Field(default=None, validation_alias="simulateLiftMaintenance", serialization_alias="simulateLiftMaintenance")
+    dry_route: bool = Field(default=False, validation_alias="dryRoute", serialization_alias="dryRoute")
+    simulate_rain: bool = Field(default=False, validation_alias="simulateRain", serialization_alias="simulateRain")
+    crowd_control: bool = Field(default=True, validation_alias="crowdControl", serialization_alias="crowdControl")
 
 
 class RouteRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     origin: Location
     destination: Location
-    departure_date: date | None = Field(default=None, validation_alias=AliasChoices("departure_date", "departureDate"))
-    departure_time: time | None = Field(default=None, validation_alias=AliasChoices("departure_time", "departureTime"))
+    departure_date: date | None = None
+    departure_time: time | None = None
     preferences: RoutePreferences = Field(default_factory=RoutePreferences)
+
+
+class RerouteRequest(RouteRequest):
+    """The original journey plus where the rider is now; the reroute departs immediately."""
+    current_location: Location | None = None
+    reason: str | None = Field(default=None, max_length=64)

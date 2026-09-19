@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import {
   CircleMarker,
+  GeoJSON,
   MapContainer,
   Polyline,
   Popup,
@@ -15,6 +16,7 @@ import type {
   RouteResponse,
   RerouteData,
   TrainServiceStatus,
+  BusStopArrivals,
 } from "./types";
 import {
   api,
@@ -46,6 +48,12 @@ type JourneyStatus = {
   data_status: string;
   disruption?: Disruption;
 };
+type GeoFeature = {
+  type: "Feature";
+  properties: Record<string, unknown>;
+  geometry: { type: string; coordinates: unknown };
+};
+type RainStatus = NonNullable<RouteResponse["rain_forecast"]>;
 function LocationField({
   label,
   place,
@@ -165,6 +173,9 @@ function MapViewport({ points }: { points: [number, number][] }) {
   }, [map]);
   return null;
 }
+function featureCollection(features: GeoFeature[]) {
+  return { type: "FeatureCollection", features } as never;
+}
 function RouteBadge({ leg }: { leg: RouteLeg }) {
   const mode = leg.mode.toLowerCase();
   return (
@@ -235,6 +246,11 @@ export default function App() {
     "Accessibility",
   ]);
   const [mapError, setMapError] = useState(false);
+  const [demoDisruption, setDemoDisruption] = useState(false);
+  const [coveredLinkways, setCoveredLinkways] = useState<GeoFeature[]>([]);
+  const [stationGroundLevels, setStationGroundLevels] = useState<GeoFeature[]>([]);
+  const [weatherStatus, setWeatherStatus] = useState<RainStatus | null>(null);
+  const [busUpdates, setBusUpdates] = useState<Record<string, BusStopArrivals>>({});
   const resultsRef = useRef<HTMLElement>(null);
   const detailsButtonRef = useRef<HTMLButtonElement>(null);
   const previewVersion = useRef(0);
@@ -246,7 +262,15 @@ export default function App() {
     0;
   const remaining = legs;
   const currentPosition = accepted ? alternativeOrigin : route?.origin;
-  const disruption = journey?.disruption;
+  const demoSegment = remaining.find((leg) => leg.mode.toLowerCase() === "mrt");
+  const demoDisruptionInfo = demoSegment
+    ? {
+        line: lineInfo(demoSegment.line_name ?? demoSegment.line)?.code ?? demoSegment.line_name ?? "EWL",
+        affected_stations: [demoSegment.from, demoSegment.to],
+        message: "Demo disruption enabled for this journey.",
+      }
+    : undefined;
+  const disruption = demoDisruption ? demoDisruptionInfo : journey?.disruption;
   const disruptionKey = JSON.stringify(disruption ?? null);
   useEffect(() => {
     setPreview(null);
@@ -276,6 +300,53 @@ export default function App() {
           ]
         : [[1.3521, 103.8198]];
   }, [legs, route]);
+  useEffect(() => {
+    if (!route || points.length === 0) {
+      setCoveredLinkways([]);
+      setStationGroundLevels([]);
+      setWeatherStatus(null);
+      return;
+    }
+    const controller = new AbortController();
+    const lats = points.map(([lat]) => lat);
+    const lons = points.map(([, lon]) => lon);
+    const query = `min_lat=${Math.min(...lats)}&max_lat=${Math.max(...lats)}&min_lon=${Math.min(...lons)}&max_lon=${Math.max(...lons)}`;
+    Promise.all([
+      api<GeoFeature[]>(`/geo/covered-linkways?${query}`, { signal: controller.signal }),
+      api<GeoFeature[]>(`/geo/station-ground-levels?${query}`, { signal: controller.signal }),
+      api<RainStatus>(`/weather/rain-status?lat=${route.destination.lat}&lon=${route.destination.lon}`, { signal: controller.signal }),
+    ]).then(([covered, ground, weather]) => {
+      setCoveredLinkways(covered);
+      setStationGroundLevels(ground);
+      setWeatherStatus(weather);
+    }).catch((error) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setCoveredLinkways([]);
+        setStationGroundLevels([]);
+        setWeatherStatus(route.rain_forecast ?? null);
+      }
+    });
+    return () => controller.abort();
+  }, [route, points]);
+  useEffect(() => {
+    const busLegs = legs.filter((leg) => leg.mode.toLowerCase() === "bus" && leg.stop_code && leg.service_no);
+    if (!busLegs.length) {
+      setBusUpdates({});
+      return;
+    }
+    const controller = new AbortController();
+    Promise.all(busLegs.map(async (leg) => {
+      const key = `${leg.stop_code}-${leg.service_no}`;
+      const arrivals = await api<BusStopArrivals>(
+        `/transit/bus-arrivals?stop_code=${leg.stop_code}&service_no=${encodeURIComponent(leg.service_no ?? "")}`,
+        { signal: controller.signal },
+      );
+      return [key, arrivals] as const;
+    })).then((entries) => setBusUpdates(Object.fromEntries(entries))).catch((error) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) setBusUpdates({});
+    });
+    return () => controller.abort();
+  }, [legs]);
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -321,6 +392,9 @@ export default function App() {
         ...leg,
         line: leg.line_name ?? leg.line,
       })),
+      ...(demoDisruption && demoDisruptionInfo
+        ? { simulate_disruption: demoDisruptionInfo }
+        : {}),
     };
   }
   useEffect(() => {
@@ -373,7 +447,7 @@ export default function App() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [route, accepted, refresh, online]);
+  }, [route, accepted, refresh, online, demoDisruption]);
   async function plan(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
@@ -531,7 +605,7 @@ export default function App() {
             <Icon name="train" size={24} />
           </span>
           <span>
-            SMRT<span className="brand-light"> journeys</span>
+            sMaRT <span className="brand-light">Move</span>
             <small>A little clarity. Every journey.</small>
           </span>
         </a>
@@ -654,6 +728,18 @@ export default function App() {
               </span>
               <Icon name="access" />
             </label>
+            <label className="checkbox preference demo-toggle">
+              <input
+                type="checkbox"
+                checked={demoDisruption}
+                onChange={(e) => setDemoDisruption(e.target.checked)}
+              />
+              <span>
+                <strong>Demo disruption</strong>
+                <small>Show the alternative-route flow without a live outage.</small>
+              </span>
+              <Icon name="bell" />
+            </label>
             <div className="conditions">
               <span>
                 <Icon name="train" size={16} />
@@ -663,7 +749,13 @@ export default function App() {
               </span>
               <span>
                 <Icon name="cloud" size={16} />
-                Weather updates unavailable
+                {weatherStatus
+                  ? weatherStatus.rain_along_route
+                    ? `Rain expected · ${weatherStatus.rain_severity}`
+                    : weatherStatus.currently_raining
+                      ? "Rain observed near destination"
+                      : "No rain expected along route"
+                  : "Weather updates unavailable"}
               </span>
             </div>
             <button
@@ -716,11 +808,28 @@ export default function App() {
               className="journey-map"
             >
               <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
                 eventHandlers={{ tileerror: () => setMapError(true) }}
               />
               <MapViewport points={points} />
+              {coveredLinkways.length > 0 && (
+                <GeoJSON
+                  data={featureCollection(coveredLinkways)}
+                  style={{ color: "#0f9f9a", weight: 3, dashArray: "5 6", opacity: 0.85 }}
+                />
+              )}
+              {stationGroundLevels.length > 0 && (
+                <GeoJSON
+                  data={featureCollection(stationGroundLevels)}
+                  style={(feature) => ({
+                    color: feature?.properties?.GRND_LEVEL === "UNDERGROUND" ? "#6550d7" : "#2386c8",
+                    fillColor: feature?.properties?.GRND_LEVEL === "UNDERGROUND" ? "#c4b5fd" : "#bae6fd",
+                    fillOpacity: 0.18,
+                    weight: 1,
+                  })}
+                />
+              )}
               {legs.map(
                 (leg, i) =>
                   leg.geometry?.length > 1 && (
@@ -853,6 +962,27 @@ export default function App() {
                   {transfers} transfer{transfers === 1 ? "" : "s"}
                 </span>
               </div>
+              {route.crowd_assessment && route.crowd_assessment.status !== "unavailable" && (
+                <div className={`integration-card crowd-${route.crowd_assessment.overall_level}`}>
+                  <strong>👥 Crowd control · {route.crowd_assessment.overall_level}</strong>
+                  <p>{route.crowd_assessment.recommendation}</p>
+                  {route.crowd_assessment.tradeoff && <small>{route.crowd_assessment.tradeoff}</small>}
+                </div>
+              )}
+              {weatherStatus && (
+                <div className="integration-card weather-card">
+                  <strong>☁ Weather along route</strong>
+                  <p>{weatherStatus.recommendation}</p>
+                </div>
+              )}
+              {Object.values(busUpdates).map((update) => (
+                <div className="integration-card bus-card" key={update.stop_code}>
+                  <strong>🚌 Live arrivals · stop {update.stop_code}</strong>
+                  <p>{update.status === "live" && update.services.length
+                    ? update.services.map((service) => `Bus ${service.service_no}: ${service.next_buses[0]?.minutes_away ?? "—"} min`).join(" · ")
+                    : "Live bus arrivals are currently unavailable."}</p>
+                </div>
+              ))}
               {monitorError && (
                 <div className="inline-notice">
                   {monitorError}
@@ -863,6 +993,14 @@ export default function App() {
                     Retry updates
                   </button>
                 </div>
+              )}
+              {!disruption && (
+                <button
+                  className="secondary demo-disruption-button"
+                  onClick={() => setDemoDisruption(true)}
+                >
+                  Demo a disruption on this route
+                </button>
               )}
               {disruption && (
                 <div className="journey-warning" role="alert">
@@ -1201,21 +1339,19 @@ export default function App() {
                 </>
               )}
               {categories.includes("Weather") && (
-                <InfoCard icon="cloud" title="Weather updates unavailable">
+                <InfoCard icon="cloud" title={weatherStatus ? "Weather updates" : "Weather updates unavailable"}>
                   <p>
-                    Rain forecasts and sheltered-route comparisons are not
-                    available yet.
+                    {weatherStatus?.recommendation ?? "Rain forecasts and sheltered-route comparisons are not available yet."}
                   </p>
-                  <span className="neutral-pill">
-                    No live weather information
-                  </span>
+                  <span className="neutral-pill">{weatherStatus ? weatherStatus.rain_severity : "No live weather information"}</span>
                 </InfoCard>
               )}
               {categories.includes("Bus") && (
-                <InfoCard icon="bus" title="Bus service updates unavailable">
+                <InfoCard icon="bus" title={Object.keys(busUpdates).length ? "Live bus service updates" : "Bus service updates unavailable"}>
                   <p>
-                    Bus journey directions are available when returned by the
-                    planner. Live bus delays are not currently available.
+                    {Object.values(busUpdates).length
+                      ? Object.values(busUpdates).map((update) => `${update.stop_code}: ${update.status}`).join(" · ")
+                      : "Bus journey directions are available when returned by the planner. Live bus delays are not currently available."}
                   </p>
                 </InfoCard>
               )}

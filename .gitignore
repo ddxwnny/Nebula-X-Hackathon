@@ -221,5 +221,13 @@ __marimo__/
 frontend/node_modules/
 frontend/dist/
 frontend/*.tsbuildinfo
+# Personal task backlog
+thingstodoforbread.md
+
+# Large raw spatial shapefiles
+backend/data/covered_linkway/
+*.zip
+
+# Frontend test results
 frontend/test-results/
 frontend/playwright-report/

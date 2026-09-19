@@ -62,8 +62,9 @@ class DisruptionMonitor:
         previous_status: TrainServiceStatus | None,
         current_status: TrainServiceStatus,
     ) -> None:
-        if not self._journey_service or not hasattr(self._journey_service, "_journeys"):
+        if not isinstance(self._journey_service, JourneyService) or not hasattr(self._journey_service, "_journeys"):
             return
+
 
         for journey in list(self._journey_service._journeys.values()):
             self._journey_service.evaluate_journey_disruption(journey, current_status)

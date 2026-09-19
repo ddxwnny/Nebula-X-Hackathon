@@ -1,3 +1,30 @@
+export type BusEta = {
+  estimated_arrival: string;
+  minutes_away: number;
+  wheelchair_accessible: boolean;
+  load: string;
+  bus_type: string;
+  monitored: boolean;
+};
+
+export type LiveBusInfo = {
+  status: "live" | "no_suitable_bus" | "beyond_live_horizon" | "outside_live_window" | "unavailable" | string;
+  stop_code: string;
+  service_no: string;
+  next_buses: BusEta[];
+  boarding_eta?: string | null;
+  boarding_bus_wheelchair_accessible?: boolean | null;
+  delay_vs_schedule_min?: number | null;
+  skipped_inaccessible?: number;
+  message: string;
+};
+
+export type VerificationStep = {
+  stage: string;
+  status: "done" | "warning" | "skipped" | "unavailable" | string;
+  detail: string;
+};
+
 export type RouteLeg = {
   mode: string;
   duration_min: number;
@@ -7,6 +34,9 @@ export type RouteLeg = {
   geometry: Array<{ lat: number; lon: number }>;
   line_name?: string;
   line?: string;
+  stop_code?: string | null;
+  service_no?: string | null;
+  live_bus?: LiveBusInfo | null;
 };
 
 export type RouteResponse = {
@@ -38,6 +68,12 @@ export type RouteResponse = {
         lon: number;
       };
     };
+    estimated_arrival?: {
+      departure: string;
+      arrival: string;
+      basis: "live" | "scheduled" | string;
+      note: string;
+    } | null;
   };
   accessibility: {
     step_free: boolean;
@@ -49,6 +85,52 @@ export type RouteResponse = {
     ramps_used: number;
   };
   decision: { reason: string; summary: string; details: string[] };
+  crowd_assessment?: {
+    status: string;
+    overall_level: "low" | "medium" | "high" | "unknown" | string;
+    recommendation: string;
+    tradeoff?: string | null;
+    stations: Array<{
+      line: string;
+      station: string;
+      live_level: string;
+      forecast_level: string;
+    }>;
+  } | null;
+  verification?: VerificationStep[];
+  rain_forecast?: {
+    rain_along_route: boolean;
+    rain_severity: string;
+    currently_raining: boolean;
+    current_rainfall_mm: number;
+    point_forecasts?: Array<{
+      lat: number;
+      lon: number;
+      rain_expected: boolean;
+      rain_severity: string;
+      forecast_area: string;
+      forecast_text: string;
+      valid_period: string;
+    }>;
+    recommendation: string;
+  } | null;
+  reroute?: {
+    reason?: string | null;
+    origin_source: string;
+    replanned_at: string;
+    exits_checked: number;
+  } | null;
+};
+
+export type BusStopArrivals = {
+  stop_code: string;
+  status: string;
+  fetched_at: string;
+  services: Array<{
+    service_no: string;
+    operator?: string | null;
+    next_buses: BusEta[];
+  }>;
 };
 
 export type LocationSuggestion = {

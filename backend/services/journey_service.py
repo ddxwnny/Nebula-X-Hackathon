@@ -51,6 +51,7 @@ class ActiveJourney:
 
         self.status = "active"  # active, unaffected, reroute_required, rerouted, completed, reroute_failed
         self.active_disruption: TrainDisruption | None = None
+        self.simulated_disruption = False
         self.disruption_stations_affected: list[str] = []
         self.last_checked_disruption_hash: str | None = None
         self.previous_remaining_duration_min: float = round(sum(leg.duration_min for leg in self.remaining_legs), 1)
@@ -91,6 +92,8 @@ class JourneyService:
     ) -> tuple[str, TrainDisruption | None]:
         if journey.status == "completed":
             return journey.status, None
+        if journey.simulated_disruption and journey.active_disruption:
+            return "reroute_required", journey.active_disruption
 
         # 1. Does journey use MRT in its remaining legs?
         remaining_mrt_legs = [leg for leg in journey.remaining_legs if leg.mode.lower() == "mrt"]
