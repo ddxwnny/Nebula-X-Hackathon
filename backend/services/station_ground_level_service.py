@@ -58,10 +58,18 @@ class StationGroundLevelService:
         if not station_name:
             return None
         norm_target = self._normalise_name(station_name)
+        if not norm_target:
+            return None
+        # Pass 1: exact normalized match
+        for feat in self._features:
+            name = feat.get("properties", {}).get("NAME", "")
+            if norm_target == self._normalise_name(name):
+                return feat
+        # Pass 2: substring match fallback
         for feat in self._features:
             name = feat.get("properties", {}).get("NAME", "")
             norm_name = self._normalise_name(name)
-            if norm_target == norm_name or norm_target in norm_name or norm_name in norm_target:
+            if norm_name and (norm_target in norm_name or norm_name in norm_target):
                 return feat
         return None
 

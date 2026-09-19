@@ -13,7 +13,7 @@ from config import get_settings
 from models.requests import RoutePreferences
 from models.responses import Coordinates, ExitMarker, ExitRoutingMetadata, Route, RouteLeg, StationAccess
 from services.routing_service import RoutingService
-from services.station_exit_service import StationExitService, exit_label
+from services.station_exit_service import StationExitService, build_exit_markers, exit_label
 
 
 class ExitRoutingService:
@@ -60,6 +60,12 @@ class ExitRoutingService:
             preferences=preferences,
         )
         all_candidate_markers.extend(dest_markers)
+        # Boarding and alighting can be the same station (loop journeys); plot each exit once.
+        unique_markers: dict[str, ExitMarker] = {}
+        for marker in all_candidate_markers:
+            kept = unique_markers.setdefault(marker.id, marker)
+            kept.is_selected = kept.is_selected or marker.is_selected
+        all_candidate_markers = list(unique_markers.values())
 
         route.total_duration_min = round(sum(leg.duration_min for leg in route.legs), 1)
         route.distance_m = round(sum(leg.distance_m for leg in route.legs), 1)
@@ -98,14 +104,12 @@ class ExitRoutingService:
     ) -> tuple[StationAccess | None, list[ExitMarker]]:
         # Every exit of the station is plotted, even when no walking leg is
         # replaced, so riders can see alternatives and their lift status.
-        candidate_markers = await self._station_exits.exit_markers(station_name)
-        if index < 0 or index >= len(route.legs) or route.legs[index].mode != "walk":
+        candidates = await self._station_exits.exits_for_station_name(station_name)
+        candidate_markers = build_exit_markers(candidates, (await self._lta_client.lift_statuses(station_name)).values()) if candidates else []
+        if index < 0 or index >= len(route.legs) or route.legs[index].mode != "walk" or not candidates:
             return None, candidate_markers
 
         existing = route.legs[index]
-        candidates = await self._station_exits.exits_for_station_name(station_name)
-        if not candidates:
-            return None, candidate_markers
 
         # DYNAMIC BARRIER INVALIDATION:
         # When step_free preference is active, sever exits whose lift is under maintenance

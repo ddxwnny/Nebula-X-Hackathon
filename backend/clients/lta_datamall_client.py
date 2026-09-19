@@ -5,6 +5,18 @@ import httpx
 from config import get_settings
 
 
+_STATION_SUFFIXES = (" MRT STATION", " LRT STATION", " STATION", " MRT STN", " LRT STN", " STN", " MRT", " LRT")
+
+
+def station_key(name: str) -> str:
+    """Reduce LTA/OneMap station labels ("HOUGANG MRT STATION", "Hougang") to one key."""
+    key = " ".join(str(name).upper().split())
+    for suffix in _STATION_SUFFIXES:
+        if key.endswith(suffix):
+            return key[: -len(suffix)].strip()
+    return key
+
+
 class LtaDataMallClient:
     _exit_cache: list[dict] = []
     _exit_cache_until = datetime.min.replace(tzinfo=timezone.utc)
@@ -86,6 +98,19 @@ class LtaDataMallClient:
         self._maintenance_cache[target] = (now + timedelta(hours=1), simulated)
         self._maintenance_cache[station_code] = (now + timedelta(hours=1), simulated)
 
+    @classmethod
+    def clear_simulated_maintenance(cls, station_code: str | None = None) -> None:
+        """Clear simulated maintenance from the cache."""
+        if station_code:
+            target = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
+            cls._maintenance_cache.pop(target, None)
+            cls._maintenance_cache.pop(station_code, None)
+        else:
+            # Clear all simulated entries
+            keys_to_remove = [k for k, v in cls._maintenance_cache.items() if any(item.get("lift_id") == "SIM-LIFT-1" for item in (v[1].values() if isinstance(v[1], dict) else []))]
+            for k in keys_to_remove:
+                cls._maintenance_cache.pop(k, None)
+
     async def lift_statuses(self, station_code: str) -> dict[str, dict]:
         now = datetime.now(timezone.utc)
         station_normal = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
@@ -96,9 +121,9 @@ class LtaDataMallClient:
         station_normal = station_code.upper().replace(" STATION", "").replace(" STN", "").replace(" MRT", "").strip()
         matched: dict[str, dict] = {}
         for idx, item in enumerate(all_maintenance):
-            item_stn = str(item.get("StationCode") or "").upper()
-            item_name = str(item.get("StationName") or "").upper()
-            if station_normal in item_stn or station_normal in item_name or item_name in station_normal:
+            # Exact name match: substring matching let "Punggol Point" outages
+            # (and records with a blank name) leak onto other stations.
+            if station_key(item.get("StationName") or "") == station_key(station_code) or str(item.get("StationCode") or "").upper() == station_code.upper():
                 desc = str(item.get("LiftDesc", ""))
                 lift_id = str(item.get("LiftID") or f"LIFT-{idx}")
                 matched[lift_id] = {

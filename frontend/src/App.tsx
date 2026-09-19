@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Fragment, useEffect, useState } from "react";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -11,8 +11,10 @@ type ExitCandidate = {
   exit_name: string;
   lat: number;
   lon: number;
-  has_lift: boolean;
-  lift_status: "operational" | "maintenance" | "no_lift" | string;
+  // LTA reports lift outages only; no outage is not proof an exit has a lift.
+  lift_status: "no_reported_outage" | "maintenance" | string;
+  lift_alerts: string[];
+  station_lift_alerts: string[];
   is_selected: boolean;
 };
 
@@ -113,6 +115,20 @@ const liftMaintenanceIcon = L.divIcon({
   iconAnchor: [14, 14],
 });
 
+// Station exit pin: exit code ("A", "2") with a lift badge — elevator, or struck-through when LTA reports an outage.
+function exitIcon(exit: ExitCandidate) {
+  const code = exit.exit_name.replace(/^exit\s+/i, "");
+  const outage = exit.lift_status === "maintenance";
+  const classes = ["exit-pin", exit.is_selected ? "selected" : "", outage ? "outage" : ""].join(" ");
+  return L.divIcon({
+    className: "exit-pin-icon",
+    html: `<div class="${classes}"><span class="exit-pin-code">${code}</span><span class="exit-pin-lift${outage ? " down" : ""}" aria-hidden="true">🛗</span></div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -16],
+  });
+}
+
 function useLocationSuggestions(query: string) {
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([]);
   useEffect(() => {
@@ -174,6 +190,7 @@ export default function App() {
   const [stepFree, setStepFree] = useState(true);
   const [showCovered, setShowCovered] = useState(true);
   const [showStationGround, setShowStationGround] = useState(true);
+  const [showExits, setShowExits] = useState(true);
   const [simulateOutage, setSimulateOutage] = useState(false);
   const [simulatedStation, setSimulatedStation] = useState("NOVENA");
   const [dryRouteMode, setDryRouteMode] = useState(false);
@@ -424,9 +441,12 @@ export default function App() {
                   <details className="station-guide" open>
                     <summary>Inside {route.recommended_route.exit_routing.destination.station_name}: {route.recommended_route.exit_routing.destination.exit_name}</summary>
                     <p>After alighting at <strong>{route.recommended_route.exit_routing.destination.station_name}</strong>, follow station signs for <strong>{route.recommended_route.exit_routing.destination.exit_name}</strong>.</p>
-                    {route.accessibility.step_free && (
-                      <p className="highlight-text">✓ Station lift confirmed operational. Do not use escalators or stairs.</p>
-                    )}
+                    {route.accessibility.step_free && (() => {
+                      const selected = route.recommended_route.exit_routing?.candidate_exits?.find((exit) => exit.id === route.recommended_route.exit_routing?.destination?.exit_id);
+                      return selected?.station_lift_alerts.length
+                        ? <p className="highlight-text warning">⚠️ Other lift outages reported in this station: {selected.station_lift_alerts.join("; ")}. Allow extra time or ask station staff.</p>
+                        : <p className="highlight-text">🛗 No lift outage reported by LTA for this exit. Use lifts and ramps; avoid escalators and stairs.</p>;
+                    })()}
                   </details>
                 )}
               </>
@@ -496,6 +516,13 @@ export default function App() {
               <span className="count-pill purple">{stationGroundPolygons.length}</span>
             )}
           </label>
+          <label className="map-toggle-item">
+            <input type="checkbox" checked={showExits} onChange={(e) => setShowExits(e.target.checked)} />
+            <span>🚪 Station Exits</span>
+            {showExits && (route?.recommended_route.exit_routing?.candidate_exits?.length ?? 0) > 0 && (
+              <span className="count-pill">{route?.recommended_route.exit_routing?.candidate_exits?.length}</span>
+            )}
+          </label>
           {route?.rain_forecast?.rain_along_route && (
             <div className="map-dry-indicator">
               <span className="dry-indicator-dot"></span>
@@ -530,6 +557,18 @@ export default function App() {
           <div className="legend-item">
             <span className="legend-polygon elevated-poly"></span>
             <span>Elevated Station Footprint</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-exit"><span className="exit-pin"><span className="exit-pin-code">A</span><span className="exit-pin-lift">🛗</span></span></span>
+            <span>Station Exit — no lift outage reported</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-exit"><span className="exit-pin outage"><span className="exit-pin-code">B</span><span className="exit-pin-lift down">🛗</span></span></span>
+            <span>Station Exit — lift out of service</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-exit"><span className="exit-pin selected"><span className="exit-pin-code">C</span><span className="exit-pin-lift">🛗</span></span></span>
+            <span>Exit used by this route</span>
           </div>
         </div>
 
@@ -624,7 +663,7 @@ export default function App() {
                 const midPoint = geometry[Math.floor(geometry.length / 2)];
 
                 return (
-                  <div key={`leg-${index}`}>
+                  <Fragment key={`leg-${index}`}>
                     <Polyline
                       positions={geometry}
                       pathOptions={legStyle(leg.mode, leg.line_name, leg.accessibility)}
@@ -663,37 +702,40 @@ export default function App() {
                         </Popup>
                       </Marker>
                     )}
-                  </div>
+                  </Fragment>
                 );
               })}
 
               {/* Candidate Station Exits with Lift Statuses */}
-              {route.recommended_route.exit_routing?.candidate_exits?.map((exit) => {
+              {showExits && route.recommended_route.exit_routing?.candidate_exits?.map((exit) => {
                 const isMaint = exit.lift_status === "maintenance";
-                const isSel = exit.is_selected;
 
                 return (
-                  <CircleMarker
+                  <Marker
                     key={exit.id}
-                    center={[exit.lat, exit.lon]}
-                    radius={isSel ? 9 : 7}
-                    pathOptions={{
-                      color: isSel ? "#172033" : isMaint ? "#b91c1c" : "#475569",
-                      fillColor: isSel ? "#f7b731" : isMaint ? "#ef4444" : "#94a3b8",
-                      fillOpacity: 1,
-                      weight: isSel ? 3 : 2,
-                    }}
+                    position={[exit.lat, exit.lon]}
+                    icon={exitIcon(exit)}
+                    zIndexOffset={exit.is_selected ? 1000 : isMaint ? 500 : 0}
+                    title={`${exit.station_name} ${exit.exit_name}`}
                   >
                     <Popup>
                       <div className="exit-marker-popup">
                         <strong>{exit.station_name} — {exit.exit_name}</strong>
                         <div className={`lift-badge ${isMaint ? "down" : "active"}`}>
-                          {isMaint ? "⚠️ Lift Under Maintenance (Severed)" : "✓ Lift Operational"}
+                          {isMaint ? <><s>🛗</s> Lift out of service{stepFree ? " — exit avoided" : ""}</> : "🛗 No lift outage reported"}
                         </div>
-                        {isSel && <span className="selected-tag">★ Selected Step-Free Exit</span>}
+                        {exit.lift_alerts.map((alert) => <small key={alert} className="exit-alert">{alert}</small>)}
+                        {exit.station_lift_alerts.length > 0 && (
+                          <div className="station-lift-alerts">
+                            <strong>⚠️ Other lift outages in this station</strong>
+                            {exit.station_lift_alerts.map((alert) => <small key={alert}>{alert}</small>)}
+                          </div>
+                        )}
+                        {exit.is_selected && <span className="selected-tag">★ Exit used by this route</span>}
+                        <small className="exit-source">Lift status: LTA FacilitiesMaintenance</small>
                       </div>
                     </Popup>
-                  </CircleMarker>
+                  </Marker>
                 );
               })}
 

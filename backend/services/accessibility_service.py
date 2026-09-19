@@ -161,7 +161,8 @@ class AccessibilityService:
         for exit_ in candidates.values():
             statuses = await self._lta_client.lift_statuses(exit_["station_id"])
             unavailable += sum(
-                status["status"] == "maintenance" and str(status.get("exit_id")) == exit_["exit_id"]
+                status["status"] == "maintenance"
+                and str(status.get("exit_id", "")).upper().replace("EXIT ", "").strip() == str(exit_.get("exit_id", "")).upper().replace("EXIT ", "").strip()
                 for status in statuses.values()
             )
         return list(candidates), unavailable

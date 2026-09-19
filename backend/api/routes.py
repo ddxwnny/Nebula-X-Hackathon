@@ -93,6 +93,8 @@ async def plan_route(
     if request.preferences.simulate_lift_maintenance:
         lta_client = LtaDataMallClient()
         lta_client.inject_simulated_maintenance(request.preferences.simulate_lift_maintenance)
+    else:
+        LtaDataMallClient.clear_simulated_maintenance()
 
     origin = await geocoding_service.resolve_location(request.origin)
     destination = await geocoding_service.resolve_location(request.destination)

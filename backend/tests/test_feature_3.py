@@ -98,6 +98,12 @@ class TestDynamicBarrierInvalidation(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+        res, dec = await service.apply(route, RoutePreferences(step_free=True))
+        self.assertEqual(res.verification, "severed_barrier")
+        self.assertFalse(res.accessible)
+        self.assertEqual(dec.reason, "lift_maintenance_alert")
+        self.assertIn("Severed Barrier", dec.details[-1])
+
     async def test_exit_routing_service_severs_broken_lift(self):
         from unittest.mock import AsyncMock, MagicMock
         mock_exits = MagicMock()
@@ -134,7 +140,7 @@ class TestDynamicBarrierInvalidation(unittest.IsolatedAsyncioTestCase):
         exit_a = next(c for c in candidates if c.exit_id == "A")
         exit_b = next(c for c in candidates if c.exit_id == "B")
         self.assertEqual(exit_a.lift_status, "maintenance", "Exit A should be marked maintenance")
-        self.assertEqual(exit_b.lift_status, "operational", "Exit B should be operational")
+        self.assertEqual(exit_b.lift_status, "no_reported_outage", "Exit B should have no reported outage")
         self.assertFalse(exit_a.is_selected, "Exit A with broken lift MUST NOT be selected")
         self.assertTrue(exit_b.is_selected, "Exit B with working lift MUST be selected")
 
