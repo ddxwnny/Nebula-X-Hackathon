@@ -1,13 +1,19 @@
 from datetime import date, time
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from models.responses import Coordinates
 
 
 class Location(BaseModel):
-    address: str | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: str | None = Field(default=None, validation_alias=AliasChoices("address", "label"))
     lat: float | None = None
     lon: float | None = None
+
+    @property
+    def label(self) -> str | None:
+        return self.address
 
     @model_validator(mode="after")
     def validate_source(self) -> "Location":
@@ -29,12 +35,14 @@ class Location(BaseModel):
 
 class RoutePreferences(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    step_free: bool = Field(default=False, validation_alias="stepFree", serialization_alias="stepFree")
+    step_free: bool = Field(default=False, validation_alias=AliasChoices("stepFree", "step_free"), serialization_alias="stepFree")
 
 
 class RouteRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     origin: Location
     destination: Location
-    departure_date: date | None = None
-    departure_time: time | None = None
+    departure_date: date | None = Field(default=None, validation_alias=AliasChoices("departure_date", "departureDate"))
+    departure_time: time | None = Field(default=None, validation_alias=AliasChoices("departure_time", "departureTime"))
     preferences: RoutePreferences = Field(default_factory=RoutePreferences)

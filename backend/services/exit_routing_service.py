@@ -85,6 +85,24 @@ class ExitRoutingService:
             return None
         summary = walking["route_summary"]
         geometry = RoutingService._decode_polyline(walking.get("route_geometry", ""))
-        exit_name = selected["exit_id"] if str(selected["exit_id"]).upper().startswith("EXIT ") else f"Exit {selected['exit_id']}"
-        route.legs[index] = RouteLeg(mode="walk", duration_min=round(float(summary["total_time"]) / 60, 1), distance_m=float(summary["total_distance"]), from_location=existing.from_location if is_origin else exit_name, to_location=exit_name if is_origin else existing.to_location, geometry=geometry, accessibility=existing.accessibility)
-        return StationAccess(station_id=selected["station_id"], station_name=station_name, exit_id=selected["id"], exit_name=exit_name, lat=selected["lat"], lon=selected["lon"])
+        exit_code = selected.get("exit_id") or selected.get("EXIT_CODE") or "Exit"
+        exit_name = str(exit_code) if str(exit_code).upper().startswith("EXIT ") else f"Exit {exit_code}"
+        station_id = str(selected.get("station_code") or selected.get("station_id") or station_name)
+        proper_station_name = str(selected.get("station_name") or station_name)
+        route.legs[index] = RouteLeg(
+            mode="walk",
+            duration_min=round(float(summary["total_time"]) / 60, 1),
+            distance_m=float(summary["total_distance"]),
+            from_location=existing.from_location if is_origin else exit_name,
+            to_location=exit_name if is_origin else existing.to_location,
+            geometry=geometry,
+            accessibility=existing.accessibility,
+        )
+        return StationAccess(
+            station_id=station_id,
+            station_name=proper_station_name,
+            exit_id=str(selected.get("exit_id") or selected.get("id") or exit_code),
+            exit_name=exit_name,
+            lat=selected["lat"],
+            lon=selected["lon"],
+        )

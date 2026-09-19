@@ -9,6 +9,7 @@ type RouteLeg = {
   to: string;
   geometry: Array<{ lat: number; lon: number }>;
   line_name?: string;
+  line?: string;
 };
 
 type RouteResponse = {
@@ -53,7 +54,7 @@ type RouteResponse = {
   decision: { reason: string; summary: string; details: string[] };
 };
 
-type LocationSuggestion = { address: string };
+type LocationSuggestion = { address: string; label?: string; lat?: number; lon?: number };
 
 type TrainDisruption = {
   line: string;
@@ -194,7 +195,7 @@ export default function App() {
           current_position: plannedRoute.origin,
           legs: plannedRoute.recommended_route.legs.map((leg) => ({
             mode: leg.mode,
-            line: leg.line_name,
+            line: leg.line_name ?? leg.line,
             from: leg.from,
             to: leg.to,
             duration_min: leg.duration_min,
@@ -363,13 +364,16 @@ export default function App() {
             )}
 
             <ol>
-              {currentLegs.map((leg, index) => (
-                <li key={index}>
-                  <strong>{leg.mode === "mrt" ? "MRT" : leg.mode}{leg.line_name ? ` ${leg.line_name}` : ""}</strong>
-                  <span>{leg.from} → {leg.to}</span>
-                  <small>{leg.duration_min} min</small>
-                </li>
-              ))}
+              {currentLegs.map((leg, index) => {
+                const lineName = leg.line_name ?? leg.line;
+                return (
+                  <li key={index}>
+                    <strong>{leg.mode === "mrt" ? "MRT" : leg.mode}{lineName ? ` ${lineName}` : ""}</strong>
+                    <span>{leg.from} → {leg.to}</span>
+                    <small>{leg.duration_min} min</small>
+                  </li>
+                );
+              })}
             </ol>
           </section>
         )}
@@ -412,7 +416,7 @@ export default function App() {
               <FitRoute points={points} />
               {currentLegs.map((leg, index) => {
                 const geometry = (leg.geometry ?? []).map((point) => [point.lat, point.lon] as [number, number]);
-                return geometry.length > 1 ? <Polyline key={index} positions={geometry} pathOptions={legStyle(leg.mode, leg.line_name)} /> : null;
+                return geometry.length > 1 ? <Polyline key={index} positions={geometry} pathOptions={legStyle(leg.mode, leg.line_name ?? leg.line)} /> : null;
               })}
               {route.recommended_route.exit_routing?.origin && (
                 <CircleMarker center={[route.recommended_route.exit_routing.origin.lat, route.recommended_route.exit_routing.origin.lon]} radius={8} pathOptions={{ color: "#172033", fillColor: "#20c997", fillOpacity: 1, weight: 2 }}>
