@@ -1,4 +1,4 @@
-# Door-to-Door Multi-Modal Route Planner
+# sMaRT Move
 
 An MVP FastAPI service for public-transit journeys with a walking leg at each end.
 

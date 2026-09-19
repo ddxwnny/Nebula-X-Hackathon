@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes import router as routes_router
 
 
-app = FastAPI(title="Door-to-Door Route Planner", version="0.1.0")
+app = FastAPI(title="sMaRT Move", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

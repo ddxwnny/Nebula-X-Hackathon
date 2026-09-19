@@ -531,7 +531,7 @@ export default function App() {
             <Icon name="train" size={24} />
           </span>
           <span>
-            SMRT<span className="brand-light"> journeys</span>
+            sMaRT <span className="brand-light">Move</span>
             <small>A little clarity. Every journey.</small>
           </span>
         </a>
